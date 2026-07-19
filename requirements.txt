@@ -1,0 +1,22 @@
+# --- Core / data ---
+datasets>=2.19
+pandas>=2.2
+numpy>=1.26
+tqdm>=4.66
+python-dotenv>=1.0
+
+# --- Retrieval (Stage 2) ---
+rank-bm25>=0.2.2
+sentence-transformers>=3.0
+faiss-cpu>=1.8
+
+# --- Generation (Stage 3) ---
+anthropic>=0.34
+
+# --- Evaluation / detection (Stage 4-5) ---
+scikit-learn>=1.5
+nltk>=3.8
+
+# --- Dev / notebooks ---
+jupyter>=1.0
+pytest>=8.0

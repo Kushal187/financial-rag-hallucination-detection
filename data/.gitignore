@@ -1,0 +1,9 @@
+# Ignore all data files but keep the folder structure.
+*
+!.gitignore
+!raw/
+!processed/
+raw/*
+processed/*
+!raw/.gitkeep
+!processed/.gitkeep
