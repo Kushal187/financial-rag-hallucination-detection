@@ -64,33 +64,38 @@ One row per question.
 | `gold_program`      | str             | Gold reasoning program, e.g. `"divide(3.8, divide(100, 100))"`.|
 | `split`             | str             | Source FinQA split (`train`/`dev`/`test`).                     |
 
-## Scope: dev + test
+## Chunk deduplication (one row per document fact)
+
+Chunks are **document-level** facts, not question-level. Because FinQA has ~3 questions per
+filing page, `scripts/build_corpus.py` deduplicates by `doc_id`: each document's chunks are
+emitted **exactly once**, no matter how many questions reference that page. The build asserts
+every `(doc_id, local_id)` pair is unique. (Without this, a page's chunks were duplicated ~3×,
+which crowded distinct chunks out of the retrieval top-k and inflated the vector store.)
+
+## Scope: train + dev + test
 
 Both the processed files and the vector DB are **derived artifacts** built from the true
-source of truth, `data/raw/finqa/*.json` (all splits, tracked in git). They are scoped
-identically to the splits this project actually queries: **dev + test**.
+source of truth, `data/raw/finqa/*.json` (tracked in git). They are scoped **identically** to
+all three splits. Deduplicated, the full corpus is ~86k chunks (train 65,379 · dev 9,177 ·
+test 11,865), comfortably under the free Weaviate Cloud sandbox limit of **100,000 objects**.
 
-Retrieval is **per-document**: a question only ever searches its own filing page, matching
-FinQA's task definition (a question's gold evidence always lives on one page). Each FinQA
-record is self-contained — one question bundled with its own page and answer — so answering
-a test question only ever retrieves that test question's own page. dev tunes retrieval
-choices; test is the held-out final report.
+Retrieval is **per-document**: a question only ever searches its own filing page (the `doc_id`
+filter), matching FinQA's task definition — a question's gold evidence always lives on one page.
+So the roles of the splits are about *which questions you run through the pipeline*, not about
+what the DB contains:
 
-**train is intentionally excluded** from both:
-- It is never *queried* — you don't retrieve over train to answer test questions, and this
-  project uses off-the-shelf embeddings (no retriever trained on train).
-- It cannot fit the vector store anyway: train alone is ~191k chunks, above the free
-  Weaviate Cloud sandbox limit of **100,000 objects**.
-
-If a later stage needs train data (e.g. few-shot prompt examples, or training a supervised
-hallucination detector), regenerate it from raw on demand:
-`python scripts/build_corpus.py --splits train dev test`. Nothing is lost by leaving it out
-now — raw is always the source of truth.
+- **test** — held-out final evaluation (report Recall@k / accuracy here).
+- **dev** — tune retrieval choices (embedding model, k, hybrid alpha).
+- **train** — development workbench: few-shot prompt examples, and — if the hallucination
+  detector is a *trained classifier* — the split you run through retrieve→generate to produce
+  labeled training data. Indexing it costs nothing extra now that it fits, and future-proofs
+  that supervised path. (An *unsupervised* detector never queries train; indexing it is then
+  just harmless.)
 
 Build both artifacts:
 
-    python scripts/build_corpus.py --splits dev test
-    python scripts/ingest_weaviate.py --recreate --split dev test
+    python scripts/build_corpus.py --splits train dev test
+    python scripts/ingest_weaviate.py --recreate --split train dev test
 
 ## Integrity invariant
 

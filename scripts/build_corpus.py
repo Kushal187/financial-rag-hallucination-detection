@@ -1,7 +1,7 @@
 """Convert raw FinQA JSON into the processed corpus + answer-key files.
 
 Usage:
-    python scripts/build_corpus.py --splits train test
+    python scripts/build_corpus.py --splits train dev test
 
 Writes to $DATA_PROCESSED_DIR (default data/processed/):
     finqa_chunks.jsonl   the corpus (embeddable content)
@@ -29,6 +29,7 @@ PROCESSED_DIR = os.getenv("DATA_PROCESSED_DIR", "data/processed")
 def build(splits: list[str]) -> None:
     all_chunks: list[dict] = []
     all_qa: list[dict] = []
+    seen_docs: set[str] = set()
 
     for split in splits:
         path = os.path.join(RAW_DIR, "finqa", f"{split}.json")
@@ -36,14 +37,20 @@ def build(splits: list[str]) -> None:
             records = json.load(f)
         print(f"{split}: {len(records)} records")
         for record in records:
-            for chunk in record_to_chunks(record):
-                chunk["split"] = split
-                all_chunks.append(chunk)
+            # FinQA has ~3 questions per document; a document's chunks are identical
+            # across its questions, so emit each document's chunks exactly once.
+            doc_id = record["filename"]
+            if doc_id not in seen_docs:
+                seen_docs.add(doc_id)
+                for chunk in record_to_chunks(record):
+                    chunk["split"] = split
+                    all_chunks.append(chunk)
             qa = record_to_qa(record)
             qa["split"] = split
             all_qa.append(qa)
 
     _assert_evidence_present(all_chunks, all_qa)
+    _assert_chunks_unique(all_chunks)
 
     os.makedirs(PROCESSED_DIR, exist_ok=True)
     _write_jsonl(os.path.join(PROCESSED_DIR, "finqa_chunks.jsonl"), all_chunks)
@@ -76,6 +83,20 @@ def _assert_evidence_present(chunks: list[dict], qa: list[dict]) -> None:
     print(f"Integrity OK: all gold evidence ids resolve to a chunk ({len(qa)} questions).")
 
 
+def _assert_chunks_unique(chunks: list[dict]) -> None:
+    """Each (doc_id, local_id) must appear exactly once (no per-question duplication)."""
+    seen: set[tuple[str, str]] = set()
+    dupes = 0
+    for c in chunks:
+        key = (c["doc_id"], c["local_id"])
+        if key in seen:
+            dupes += 1
+        seen.add(key)
+    if dupes:
+        raise AssertionError(f"{dupes} duplicate (doc_id, local_id) chunks found.")
+    print(f"Uniqueness OK: {len(chunks)} chunks, all (doc_id, local_id) pairs distinct.")
+
+
 def _write_jsonl(path: str, rows: list[dict]) -> None:
     with open(path, "w", encoding="utf-8") as f:
         for row in rows:
@@ -87,9 +108,9 @@ def main() -> None:
     parser.add_argument(
         "--splits",
         nargs="+",
-        default=["dev", "test"],
-        help="FinQA splits to include (default: dev test -- the queried splits). "
-        "Add 'train' when a stage needs it (few-shot examples, detector training).",
+        default=["train", "dev", "test"],
+        help="FinQA splits to include (default: train dev test -- deduped they fit the "
+        "100k Weaviate sandbox cap at ~86k chunks).",
     )
     build(parser.parse_args().splits)
 

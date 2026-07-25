@@ -27,10 +27,9 @@ def main() -> None:
     parser.add_argument(
         "--split",
         nargs="+",
-        default=["dev", "test"],
-        help="which splits to ingest (default: dev test -- the queried/eval splits). "
-        "Use 'all' for every split. Note the sandbox cluster caps at 100k objects, "
-        "so train (~191k chunks) does not fit.",
+        default=["train", "dev", "test"],
+        help="which splits to ingest (default: train dev test). Deduped these total "
+        "~86k chunks, under the 100k Weaviate sandbox cap. Use 'all' for every split.",
     )
     args = parser.parse_args()
 
