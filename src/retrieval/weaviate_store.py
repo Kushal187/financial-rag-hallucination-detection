@@ -110,6 +110,37 @@ def search(query_vector: np.ndarray, doc_id: str, k: int = 5, name: str = _COLLE
     ]
 
 
+def hybrid_search(
+    query: str,
+    query_vector: np.ndarray,
+    doc_id: str,
+    k: int = 5,
+    alpha: float = 0.5,
+    name: str = _COLLECTION,
+) -> list[dict]:
+    """Return the top-k chunks within a single document, ranked by Weaviate's native
+    hybrid fusion of BM25 keyword search (over `content`) and vector search. `alpha=0` is
+    pure BM25, `alpha=1` is pure vector search."""
+    collection = get_client().collections.get(name)
+    result = collection.query.hybrid(
+        query=query,
+        vector=query_vector.tolist(),
+        alpha=alpha,
+        query_properties=["content"],
+        limit=k,
+        filters=Filter.by_property("doc_id").equal(doc_id),
+        return_metadata=MetadataQuery(score=True),
+    )
+    return [
+        {
+            "local_id": o.properties["local_id"],
+            "content": o.properties["content"],
+            "score": o.metadata.score,
+        }
+        for o in result.objects
+    ]
+
+
 def count(name: str = _COLLECTION) -> int:
     """Total objects currently in the collection."""
     return get_client().collections.get(name).aggregate.over_all(total_count=True).total_count

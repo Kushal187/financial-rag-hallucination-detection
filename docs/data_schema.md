@@ -85,7 +85,18 @@ So the roles of the splits are about *which questions you run through the pipeli
 what the DB contains:
 
 - **test** — held-out final evaluation (report Recall@k / accuracy here).
-- **dev** — tune retrieval choices (embedding model, k, hybrid alpha).
+- **dev** — tune retrieval choices (embedding model, k, hybrid alpha). Swept via
+  `scripts/sweep_hybrid_alpha.py --split dev`; `alpha=0.6` beat both pure BM25 (`alpha=0`)
+  and pure dense (`alpha=1`) at every k=1/3/5, and is the default in `src/retrieval/hybrid.py`
+  (override with `HYBRID_ALPHA` in `.env`):
+
+  | alpha | Recall@1 | Recall@3 | Recall@5 |
+  |-------|----------|----------|----------|
+  | 0.0 (BM25 only)  | 49.0% | 70.3% | 80.2% |
+  | 0.5              | 50.0% | 74.0% | 82.6% |
+  | **0.6**          | **50.1%** | **74.7%** | 82.8% |
+  | 0.75             | 50.1% | 74.2% | **83.0%** |
+  | 1.0 (dense only) | 48.2% | 71.7% | 82.2% |
 - **train** — development workbench: few-shot prompt examples, and — if the hallucination
   detector is a *trained classifier* — the split you run through retrieve→generate to produce
   labeled training data. Indexing it costs nothing extra now that it fits, and future-proofs
