@@ -9,3 +9,4 @@ processed/*
 !processed/.gitkeep
 !raw/finqa/
 !raw/finqa/*.json
+!processed/*.jsonl
