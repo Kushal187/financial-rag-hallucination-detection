@@ -1,0 +1,395 @@
+{
+  "train": {
+    "split": "train",
+    "n_examples": 6251,
+    "top_level_fields": {
+      "pre_text": 6251,
+      "post_text": 6251,
+      "filename": 6251,
+      "table_ori": 6251,
+      "table": 6251,
+      "qa": 6251,
+      "id": 6251,
+      "table_retrieved": 6251,
+      "text_retrieved": 6251,
+      "table_retrieved_all": 6251,
+      "text_retrieved_all": 6251
+    },
+    "qa_fields": {
+      "question": 6251,
+      "answer": 6251,
+      "explanation": 6251,
+      "ann_table_rows": 6251,
+      "ann_text_rows": 6251,
+      "steps": 6251,
+      "program": 6251,
+      "gold_inds": 6251,
+      "exe_ans": 6251,
+      "tfidftopn": 6251,
+      "program_re": 6251,
+      "model_input": 6251
+    },
+    "pre_text_sentences": {
+      "mean": 11.6,
+      "median": 9,
+      "max": 450
+    },
+    "post_text_sentences": {
+      "mean": 12.7,
+      "median": 10,
+      "max": 489
+    },
+    "table_rows": {
+      "mean": 6.3,
+      "median": 6,
+      "max": 20
+    },
+    "table_cols": {
+      "mean": 3.8,
+      "median": 4,
+      "max": 11
+    },
+    "question_words": {
+      "mean": 16.6,
+      "median": 15,
+      "max": 62
+    },
+    "answer_types": {
+      "integer": 1273,
+      "empty": 48,
+      "percentage": 3508,
+      "decimal": 1191,
+      "currency": 75,
+      "string": 156
+    },
+    "operations": {
+      "divide": 4445,
+      "subtract": 2739,
+      "add": 1512,
+      "multiply": 567,
+      "greater": 124,
+      "table_average": 95,
+      "table_max": 48,
+      "table_sum": 36,
+      "table_min": 27,
+      "exp": 5
+    },
+    "ops_per_program": {
+      "mean": 1.5,
+      "median": 1,
+      "max": 6
+    },
+    "gold_evidence": {
+      "text_only": 1458,
+      "table_only": 3922,
+      "both_text_and_table": 871,
+      "missing_or_empty": 0,
+      "items_per_example": {
+        "mean": 1.7,
+        "median": 2,
+        "max": 9
+      }
+    },
+    "n_unique_companies": 135,
+    "top_10_companies": {
+      "ETR": 363,
+      "UNP": 303,
+      "JPM": 223,
+      "AMT": 206,
+      "LMT": 191,
+      "GS": 183,
+      "PNC": 173,
+      "MRO": 170,
+      "IP": 168,
+      "AAPL": 160
+    },
+    "year_distribution": {
+      "1999": 4,
+      "2000": 4,
+      "2001": 37,
+      "2002": 65,
+      "2003": 109,
+      "2004": 150,
+      "2005": 155,
+      "2006": 265,
+      "2007": 331,
+      "2008": 476,
+      "2009": 426,
+      "2010": 377,
+      "2011": 370,
+      "2012": 498,
+      "2013": 487,
+      "2014": 423,
+      "2015": 485,
+      "2016": 474,
+      "2017": 545,
+      "2018": 509,
+      "2019": 61
+    },
+    "answer_vs_exe_ans": {
+      "checked": 5968,
+      "mismatches_after_scale_normalization": 3093
+    }
+  },
+  "dev": {
+    "split": "dev",
+    "n_examples": 883,
+    "top_level_fields": {
+      "pre_text": 883,
+      "post_text": 883,
+      "filename": 883,
+      "table_ori": 883,
+      "table": 883,
+      "qa": 883,
+      "id": 883,
+      "table_retrieved": 883,
+      "text_retrieved": 883,
+      "table_retrieved_all": 883,
+      "text_retrieved_all": 883
+    },
+    "qa_fields": {
+      "question": 883,
+      "answer": 883,
+      "explanation": 883,
+      "ann_table_rows": 883,
+      "ann_text_rows": 883,
+      "steps": 883,
+      "program": 883,
+      "gold_inds": 883,
+      "exe_ans": 883,
+      "tfidftopn": 883,
+      "program_re": 883,
+      "model_input": 883
+    },
+    "pre_text_sentences": {
+      "mean": 11.0,
+      "median": 8,
+      "max": 84
+    },
+    "post_text_sentences": {
+      "mean": 13.1,
+      "median": 11,
+      "max": 84
+    },
+    "table_rows": {
+      "mean": 6.3,
+      "median": 6,
+      "max": 18
+    },
+    "table_cols": {
+      "mean": 3.9,
+      "median": 4,
+      "max": 9
+    },
+    "question_words": {
+      "mean": 16.4,
+      "median": 15,
+      "max": 43
+    },
+    "answer_types": {
+      "decimal": 172,
+      "percentage": 492,
+      "integer": 184,
+      "string": 13,
+      "currency": 10,
+      "empty": 12
+    },
+    "operations": {
+      "divide": 636,
+      "subtract": 416,
+      "add": 180,
+      "multiply": 83,
+      "table_average": 19,
+      "greater": 10,
+      "table_max": 8,
+      "table_min": 5,
+      "table_sum": 4,
+      "exp": 1
+    },
+    "ops_per_program": {
+      "mean": 1.5,
+      "median": 1,
+      "max": 5
+    },
+    "gold_evidence": {
+      "text_only": 198,
+      "table_only": 542,
+      "both_text_and_table": 143,
+      "missing_or_empty": 0,
+      "items_per_example": {
+        "mean": 1.7,
+        "median": 2,
+        "max": 8
+      }
+    },
+    "n_unique_companies": 97,
+    "top_10_companies": {
+      "ETR": 59,
+      "UNP": 48,
+      "LMT": 38,
+      "MRO": 35,
+      "JPM": 30,
+      "PNC": 27,
+      "AES": 27,
+      "IP": 27,
+      "BLK": 27,
+      "PM": 26
+    },
+    "year_distribution": {
+      "2001": 2,
+      "2002": 14,
+      "2003": 15,
+      "2004": 17,
+      "2005": 27,
+      "2006": 42,
+      "2007": 64,
+      "2008": 70,
+      "2009": 59,
+      "2010": 40,
+      "2011": 58,
+      "2012": 57,
+      "2013": 73,
+      "2014": 61,
+      "2015": 72,
+      "2016": 58,
+      "2017": 101,
+      "2018": 43,
+      "2019": 10
+    },
+    "answer_vs_exe_ans": {
+      "checked": 851,
+      "mismatches_after_scale_normalization": 424
+    }
+  },
+  "test": {
+    "split": "test",
+    "n_examples": 1147,
+    "top_level_fields": {
+      "pre_text": 1147,
+      "post_text": 1147,
+      "filename": 1147,
+      "table_ori": 1147,
+      "table": 1147,
+      "qa": 1147,
+      "id": 1147,
+      "table_retrieved": 1147,
+      "text_retrieved": 1147,
+      "table_retrieved_all": 1147,
+      "text_retrieved_all": 1147
+    },
+    "qa_fields": {
+      "question": 1147,
+      "answer": 1147,
+      "explanation": 1147,
+      "ann_table_rows": 1147,
+      "ann_text_rows": 1147,
+      "steps": 1147,
+      "program": 1147,
+      "gold_inds": 1147,
+      "exe_ans": 1147,
+      "tfidftopn": 1147,
+      "program_re": 1147,
+      "model_input": 1147
+    },
+    "pre_text_sentences": {
+      "mean": 12.2,
+      "median": 10,
+      "max": 120
+    },
+    "post_text_sentences": {
+      "mean": 12.5,
+      "median": 9,
+      "max": 260
+    },
+    "table_rows": {
+      "mean": 6.6,
+      "median": 6,
+      "max": 18
+    },
+    "table_cols": {
+      "mean": 3.9,
+      "median": 4,
+      "max": 14
+    },
+    "question_words": {
+      "mean": 16.7,
+      "median": 16,
+      "max": 44
+    },
+    "answer_types": {
+      "integer": 227,
+      "percentage": 652,
+      "empty": 14,
+      "string": 26,
+      "decimal": 216,
+      "currency": 12
+    },
+    "operations": {
+      "divide": 820,
+      "subtract": 521,
+      "add": 260,
+      "multiply": 109,
+      "greater": 20,
+      "table_average": 15,
+      "table_max": 10,
+      "table_sum": 10,
+      "table_min": 4,
+      "exp": 3
+    },
+    "ops_per_program": {
+      "mean": 1.5,
+      "median": 1,
+      "max": 5
+    },
+    "gold_evidence": {
+      "text_only": 283,
+      "table_only": 706,
+      "both_text_and_table": 158,
+      "missing_or_empty": 0,
+      "items_per_example": {
+        "mean": 1.7,
+        "median": 2,
+        "max": 8
+      }
+    },
+    "n_unique_companies": 100,
+    "top_10_companies": {
+      "GS": 65,
+      "AMT": 56,
+      "ETR": 50,
+      "JPM": 40,
+      "UNP": 38,
+      "MRO": 36,
+      "PNC": 30,
+      "IP": 27,
+      "C": 26,
+      "SNA": 25
+    },
+    "year_distribution": {
+      "1999": 3,
+      "2001": 11,
+      "2002": 14,
+      "2003": 25,
+      "2004": 26,
+      "2005": 22,
+      "2006": 76,
+      "2007": 73,
+      "2008": 92,
+      "2009": 57,
+      "2010": 72,
+      "2011": 48,
+      "2012": 115,
+      "2013": 83,
+      "2014": 70,
+      "2015": 87,
+      "2016": 84,
+      "2017": 91,
+      "2018": 88,
+      "2019": 10
+    },
+    "answer_vs_exe_ans": {
+      "checked": 1100,
+      "mismatches_after_scale_normalization": 570
+    }
+  }
+}
