@@ -1,77 +1,62 @@
-# scripts/eval_retrieval.py
-"""Compute Recall@k for a retrieval predictions file.
+"""Evaluate a retriever on FinQA: Recall@k over a split.
 
-Generic across retrievers — works for BM25, dense, or hybrid as long as
-they all produce predictions in the shared format.
+Reports, per k:
+  Recall@k  mean per-query fraction of gold evidence retrieved
+  Full@k    fraction of questions with ALL gold evidence in the top-k (answerable)
 
-Run from repo root:
-    python scripts/eval_retrieval.py data/processed/bm25_predictions_dev.json
+Usage:
+    python scripts/eval_retrieval.py --split test
+    python scripts/eval_retrieval.py --split dev --k 1 3 5 10
+    python scripts/eval_retrieval.py --split dev --retriever hybrid --alpha 0.7
 """
+
 import argparse
-import json
-from typing import Dict
+import functools
+import os
+import sys
+
+from dotenv import load_dotenv
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.data.load_data import load_qa  # noqa: E402
+from src.eval.metrics import evaluate_retriever  # noqa: E402
+from src.retrieval import dense, hybrid, weaviate_store  # noqa: E402
+
+load_dotenv()
 
 
-def recall_at_k(predictions: Dict, k: int) -> float:
-    """Average per-example recall: fraction of gold items appearing in top-k."""
-    total = 0
-    running = 0.0
-    for pred in predictions.values():
-        gold = set(pred["gold_inds"])
-        if not gold:
-            continue
-        retrieved = {r["id"] for r in pred["retrieved"][:k]}
-        running += len(gold & retrieved) / len(gold)
-        total += 1
-    return running / total if total else 0.0
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--split", default="test", help="split to evaluate (default: test)")
+    parser.add_argument("--k", nargs="+", type=int, default=[1, 5, 10, 20])
+    parser.add_argument("--limit", type=int, default=None, help="evaluate only the first N questions")
+    parser.add_argument("--retriever", choices=["dense", "hybrid"], default="dense")
+    parser.add_argument("--alpha", type=float, default=hybrid.DEFAULT_ALPHA, help="hybrid only: 0=BM25, 1=vector")
+    args = parser.parse_args()
 
+    qa = [q for q in load_qa() if q["split"] == args.split]
+    if args.limit:
+        qa = qa[: args.limit]
 
-def recall_by_evidence_type(predictions: Dict, k: int) -> Dict:
-    """Break out recall@k by whether gold evidence is text-only, table-only, or mixed."""
-    buckets = {"text_only": [], "table_only": [], "mixed": []}
-    for pred in predictions.values():
-        gold = set(pred["gold_inds"])
-        if not gold:
-            continue
-        has_text = any(g.startswith("text_") for g in gold)
-        has_table = any(g.startswith("table_") for g in gold)
-        if has_text and has_table:
-            bucket = "mixed"
-        elif has_text:
-            bucket = "text_only"
-        else:
-            bucket = "table_only"
-        retrieved = {r["id"] for r in pred["retrieved"][:k]}
-        buckets[bucket].append(len(gold & retrieved) / len(gold))
-    return {
-        b: {"recall": (sum(vs) / len(vs) if vs else 0.0), "n": len(vs)}
-        for b, vs in buckets.items()
-    }
+    if args.retriever == "hybrid":
+        retrieve_fn = functools.partial(hybrid.retrieve, alpha=args.alpha)
+        print(f"Evaluating hybrid retrieval (alpha={args.alpha}) on {len(qa)} '{args.split}' questions...")
+    else:
+        retrieve_fn = dense.retrieve
+        print(f"Evaluating dense retrieval on {len(qa)} '{args.split}' questions...")
 
+    try:
+        results = evaluate_retriever(retrieve_fn, qa, ks=tuple(args.k))
+    finally:
+        weaviate_store.close_client()
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("predictions", help="Path to predictions JSON")
-    ap.add_argument("--ks", nargs="+", type=int, default=[1, 3, 5, 10])
-    args = ap.parse_args()
-
-    with open(args.predictions) as f:
-        preds = json.load(f)
-
-    n_with_gold = sum(1 for p in preds.values() if p["gold_inds"])
-    print(f"\nPredictions: {len(preds)}  |  With gold evidence: {n_with_gold}\n")
-
-    print("Overall Recall@k")
-    print("-" * 32)
-    for k in args.ks:
-        print(f"  Recall@{k:<2}: {recall_at_k(preds, k):.4f}")
-
-    print("\nRecall@5 by evidence type")
-    print("-" * 32)
-    breakdown = recall_by_evidence_type(preds, k=5)
-    for bucket, info in breakdown.items():
-        print(f"  {bucket:<11} (n={info['n']:>5}): {info['recall']:.4f}")
+    print(f"\n{'k':>4}  {'Recall@k':>9}  {'Full@k':>7}")
+    for k in sorted(results):
+        r = results[k]
+        print(f"{k:>4}  {r['recall']:>8.1%}  {r['full']:>6.1%}")
 
 
 if __name__ == "__main__":
     main()
+
