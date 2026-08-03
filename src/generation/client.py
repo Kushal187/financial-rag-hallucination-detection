@@ -1,7 +1,17 @@
-"""Wrapper around the Groq chat completions API."""
+"""Wrapper around the Groq chat completions API.
+
+- lazy singleton client + ``GROQ_MODEL`` env (unchanged from the original)
+- ``chat(...)`` now accepts ``response_format`` for JSON mode
+- ``chat_json(...)`` forces JSON-object output (Groq requires the literal token
+  "json" to appear in the prompt for JSON mode — handled here)
+- ``_retry`` adds exponential backoff on rate limits and transient 5xx/transport
+  errors, so a multi-question run doesn't die on the first 429
+"""
 
 import os
+import time
 
+import groq
 from dotenv import load_dotenv
 from groq import Groq
 
@@ -9,6 +19,12 @@ load_dotenv()
 
 _MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 _client: Groq | None = None
+
+# Retryable exception classes (resolved defensively in case the SDK renames any).
+_RateLimitError = getattr(groq, "RateLimitError", ())
+_APIStatusError = getattr(groq, "APIStatusError", ())
+_APIConnectionError = getattr(groq, "APIConnectionError", ())
+_APITimeoutError = getattr(groq, "APITimeoutError", ())
 
 
 def get_client() -> Groq:
@@ -21,11 +37,52 @@ def get_client() -> Groq:
     return _client
 
 
-def chat(messages: list[dict], temperature: float = 0.0, max_tokens: int = 512) -> str:
-    response = get_client().chat.completions.create(
-        model=_MODEL,
-        messages=messages,
+def _is_retryable(err: Exception) -> bool:
+    """Rate limits, transport errors, and 5xx server errors are worth retrying."""
+    if isinstance(err, (_RateLimitError, _APIConnectionError, _APITimeoutError)):
+        return True
+    status = getattr(err, "status_code", None)
+    return isinstance(err, _APIStatusError) and status is not None and status >= 500
+
+
+def _retry(call_fn, *, max_retries: int = 4, base_delay: float = 2.0, max_delay: float = 60.0):
+    """Run ``call_fn`` with exponential backoff on retryable Groq errors."""
+    for attempt in range(max_retries + 1):
+        try:
+            return call_fn()
+        except Exception as err:
+            if attempt >= max_retries or not _is_retryable(err):
+                raise
+            time.sleep(min(max_delay, base_delay * (2**attempt)))
+
+
+def chat(
+    messages: list[dict],
+    temperature: float = 0.0,
+    max_tokens: int = 512,
+    response_format: dict | None = None,
+) -> str:
+    def call():
+        return get_client().chat.completions.create(
+            model=_MODEL,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+        )
+
+    response = _retry(call)
+    return response.choices[0].message.content
+
+
+def chat_json(messages: list[dict], temperature: float = 0.0, max_tokens: int = 512) -> str:
+    """Force JSON-object output. Ensures the literal token 'json' is in the prompt
+    (Groq rejects ``response_format=json_object`` otherwise)."""
+    if not any("json" in str(m.get("content", "")).lower() for m in messages):
+        messages = [{"role": "system", "content": "Respond with valid json."}, *messages]
+    return chat(
+        messages,
         temperature=temperature,
         max_tokens=max_tokens,
+        response_format={"type": "json_object"},
     )
-    return response.choices[0].message.content

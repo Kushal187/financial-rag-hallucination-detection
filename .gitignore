@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Generation / detection run outputs (per-row JSONL) — large, regenerable artifacts
+data/runs/
