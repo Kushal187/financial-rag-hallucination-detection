@@ -4,6 +4,7 @@ Usage:
     python scripts/eval_retrieval.py --split dev --retriever bm25
     python scripts/eval_retrieval.py --split dev --retriever dense
     python scripts/eval_retrieval.py --split dev --retriever hybrid --alpha 0.7
+    python scripts/eval_retrieval.py --split dev --retriever rerank --pool 20
 """
 
 import argparse
@@ -17,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.load_data import load_qa  # noqa: E402
 from src.eval.metrics import evaluate_retriever  # noqa: E402
-from src.retrieval import bm25, dense, hybrid, weaviate_store  # noqa: E402
+from src.retrieval import bm25, dense, hybrid, rerank, weaviate_store  # noqa: E402
 
 load_dotenv()
 
@@ -27,8 +28,10 @@ def main() -> None:
     parser.add_argument("--split", default="test", help="split to evaluate (default: test)")
     parser.add_argument("--k", nargs="+", type=int, default=[1, 5, 10, 20])
     parser.add_argument("--limit", type=int, default=None, help="evaluate only the first N questions")
-    parser.add_argument("--retriever", choices=["bm25", "dense", "hybrid"], default="dense")
+    parser.add_argument("--retriever", choices=["bm25", "dense", "hybrid", "rerank"], default="dense")
     parser.add_argument("--alpha", type=float, default=hybrid.DEFAULT_ALPHA, help="hybrid only: 0=BM25, 1=vector")
+    parser.add_argument("--pool", type=int, default=rerank.DEFAULT_POOL, help="rerank only: first-stage candidates")
+    parser.add_argument("--base", choices=["hybrid", "bm25"], default=rerank.DEFAULT_BASE, help="rerank only: first stage")
     args = parser.parse_args()
 
     qa = [q for q in load_qa() if q["split"] == args.split]
@@ -38,6 +41,12 @@ def main() -> None:
     if args.retriever == "hybrid":
         retrieve_fn = functools.partial(hybrid.retrieve, alpha=args.alpha)
         print(f"Evaluating hybrid retrieval (alpha={args.alpha}) on {len(qa)} '{args.split}' questions...")
+    elif args.retriever == "rerank":
+        retrieve_fn = functools.partial(rerank.retrieve, pool=args.pool, base=args.base)
+        print(
+            f"Evaluating cross-encoder rerank (base={args.base} pool={args.pool} "
+            f"model={rerank.DEFAULT_MODEL}) on {len(qa)} '{args.split}' questions..."
+        )
     elif args.retriever == "bm25":
         retrieve_fn = bm25.retrieve
         print(f"Evaluating BM25 retrieval on {len(qa)} '{args.split}' questions...")

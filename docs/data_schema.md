@@ -97,6 +97,9 @@ what the DB contains:
   | **0.6**          | **50.1%** | **74.7%** | 82.8% |
   | 0.75             | 50.1% | 74.2% | **83.0%** |
   | 1.0 (dense only) | 48.2% | 71.7% | 82.2% |
+
+  Cross-encoder reranking on top of this beats it at every k on both dev and test — see
+  [rerank_results.md](rerank_results.md).
 - **train** — development workbench: few-shot prompt examples, and — if the hallucination
   detector is a *trained classifier* — the split you run through retrieve→generate to produce
   labeled training data. Indexing it costs nothing extra now that it fits, and future-proofs

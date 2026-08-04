@@ -37,7 +37,7 @@ load_dotenv()
 _RUNS_DIR = "data/runs"
 
 
-def _build_retriever(name: str, alpha: float | None):
+def _build_retriever(name: str, alpha: float | None, pool: int | None = None):
     """Import only the requested retriever (lazy), so a bm25 run doesn't require
     sentence-transformers/torch or a Weaviate connection."""
     if name == "bm25":
@@ -54,6 +54,12 @@ def _build_retriever(name: str, alpha: float | None):
         from src.retrieval import dense
 
         return dense.retrieve
+    if name == "rerank":
+        from src.retrieval import rerank
+
+        if pool is None:
+            pool = rerank.DEFAULT_POOL
+        return functools.partial(rerank.retrieve, pool=pool)
     raise ValueError(f"unknown retriever {name!r}")
 
 
@@ -64,9 +70,10 @@ def main() -> None:
     parser.add_argument(
         "--strategies", nargs="+", default=list(STRATEGIES), choices=list(STRATEGIES)
     )
-    parser.add_argument("--retriever", choices=["bm25", "dense", "hybrid"], default="hybrid")
+    parser.add_argument("--retriever", choices=["bm25", "dense", "hybrid", "rerank"], default="hybrid")
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--alpha", type=float, default=None, help="hybrid only (default: hybrid.DEFAULT_ALPHA)")
+    parser.add_argument("--pool", type=int, default=None, help="rerank only (default: rerank.DEFAULT_POOL)")
     parser.add_argument("--seed", type=int, default=42, help="few-shot example sampling seed")
     parser.add_argument("--save-messages", action="store_true")
     parser.add_argument("--out", default=None)
@@ -86,7 +93,7 @@ def main() -> None:
         else None
     )
 
-    retrieve_fn = _build_retriever(args.retriever, args.alpha)
+    retrieve_fn = _build_retriever(args.retriever, args.alpha, args.pool)
     os.makedirs(_RUNS_DIR, exist_ok=True)
     out_path = args.out or os.path.join(
         _RUNS_DIR, f"gen_{args.split}_{args.retriever}_k{args.k}_{int(time.time())}.jsonl"

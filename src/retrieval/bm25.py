@@ -75,6 +75,16 @@ def retrieve(question: str, doc_id: str, k: int = 5) -> List[str]:
     retriever = _RETRIEVER_CACHE[doc_id]
     return [local_id for local_id, _ in retriever.rank(question, k)]
 
+
+def chunks_for_doc(doc_id: str) -> List[dict]:
+    """Return the cached chunk dicts for `doc_id` (empty if unknown).
+
+    Exposes the corpus this module already holds in memory, so callers that need
+    `content`/`position` alongside a ranking (e.g. src.retrieval.rerank) don't have to
+    build a second index over the same 86k rows.
+    """
+    return _get_chunks_by_doc().get(doc_id, [])
+
 # # src/retrieval/bm25.py
 # """BM25 retrieval for FinQA examples.
 
