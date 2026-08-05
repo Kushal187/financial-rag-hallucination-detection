@@ -35,7 +35,7 @@ from src.generation.prompts import build_messages, load_few_shot_examples
         ("YES it did", "yes_no"),
         ("", "none"),
         (None, "none"),
-        ("cannot determine", "text"),
+        ("cannot determine", "abstention"),
     ],
 )
 def test_normalize_answer_kind(raw, expected_kind):
@@ -50,6 +50,17 @@ def test_normalize_answer_strips_currency_and_separators():
 def test_normalize_answer_yes_canonicalized():
     assert normalize_answer("Yes.")[0] == "yes"
     assert normalize_answer("no")[0] == "no"
+
+
+def test_normalize_answer_abstention_canonical_phrase():
+    # the exact string the zero-shot prompt tells the model to emit
+    s = "I cannot determine the answer from the provided evidence."
+    assert normalize_answer(s) == (None, "abstention")
+
+
+def test_normalize_answer_abstention_only_when_no_number():
+    # a hedged answer that still commits to a number should NOT be flagged abstention
+    assert normalize_answer("cannot be determined precisely; approximately 93.5") == (93.5, "number")
 
 
 # --------------------------------------------------------------------------- #
