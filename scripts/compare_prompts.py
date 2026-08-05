@@ -121,7 +121,7 @@ def main() -> None:
                         few_shot_examples=few_shot,
                         save_messages=args.save_messages,
                     )
-                    abstained = gen["answer_type"] == "none"
+                    abstained = gen["answer_type"] in ("abstention", "none")
                     correct = answers_match(
                         gen["answer"], row["gold_answer"], row["gold_answer_exe"]
                     )
@@ -163,15 +163,18 @@ def main() -> None:
 
             weaviate_store.close_client()
 
-    # results table
+    # results table. `accuracy` counts abstentions as wrong; `attempted` is accuracy
+    # among questions the model actually answered (correct / non-abstentions) — the
+    # fairer view when a strategy abstains often.
     print(f"\nResults (n per strategy shown; wrote {out_path})")
-    print(f"{'strategy':<12} {'accuracy':>9} {'%answered':>10} {'avg_lat_ms':>11} {'n':>5}")
+    print(f"{'strategy':<12} {'accuracy':>9} {'attempted':>10} {'%answered':>10} {'avg_lat_ms':>11} {'n':>5}")
     for s in args.strategies:
         st = stats[s]
         n = st["n"] or 1
+        attempted = st["answered"] or 1
         print(
-            f"{s:<12} {st['correct'] / n:>8.1%} {st['answered'] / n:>9.1%} "
-            f"{st['latency_ms'] / n:>10.0f} {st['n']:>5}"
+            f"{s:<12} {st['correct'] / n:>8.1%} {st['correct'] / attempted:>9.1%} "
+            f"{st['answered'] / n:>9.1%} {st['latency_ms'] / n:>10.0f} {st['n']:>5}"
         )
 
 

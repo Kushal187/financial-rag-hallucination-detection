@@ -29,6 +29,16 @@ __all__ = [
 _NUM_RE = re.compile(r"-?\d[\d,]*\.?\d+")
 _YESNO_RE = re.compile(r"^\s*(yes|no)\b", re.IGNORECASE)
 _FINAL_ANSWER_RE = re.compile(r"final\s+answer\s*:?\s*(.+)", re.IGNORECASE | re.DOTALL)
+# Phrases signalling the model declined to answer. The zero-shot prompt instructs the
+# canonical "I cannot determine the answer from the provided evidence."; the rest cover
+# common model variations.
+_ABSTENTION_RE = re.compile(
+    r"cannot (?:be )?determin"                                  # cannot determine / cannot be determined
+    r"|unable to (?:determine|answer|provide)"
+    r"|not (?:enough|sufficient) (?:info|information|evidence|data|context)"
+    r"|insufficient (?:info|information|evidence|data|context)",
+    re.IGNORECASE,
+)
 
 
 def _parse_number(text: object) -> float | None:
@@ -45,18 +55,24 @@ def _parse_number(text: object) -> float | None:
 
 
 def normalize_answer(raw: object) -> tuple[object, str]:
-    """Reduce a model answer to ``(value, kind)`` where kind ∈ {number, yes_no, text, none}.
+    """Reduce a model answer to ``(value, kind)`` where kind ∈ {number, yes_no, abstention, text, none}.
 
     - yes/no questions -> ``("yes"|"no", "yes_no")``
     - numeric answers -> ``(float, "number")``
+    - abstention (model declined) -> ``(None, "abstention")``
     - unparseable text -> ``(text, "text")``
-    - empty / abstention -> ``(None, "none")``
+    - empty -> ``(None, "none")``
     """
     if raw is None:
         return (None, "none")
     text = str(raw).strip()
     if not text:
         return (None, "none")
+
+    # Abstention: the model declined. Require no commitable number, so a hedged
+    # "cannot be determined precisely; ~93.5" still yields 93.5 rather than abstention.
+    if _ABSTENTION_RE.search(text) and _parse_number(text) is None:
+        return (None, "abstention")
 
     m = _YESNO_RE.match(text)
     if m:
