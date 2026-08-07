@@ -391,7 +391,7 @@ changes, measured on the 560-row set:
 |---|---|---|---|---|---|
 | all numbers, all operations | 0.38 | 0.11 | 0.17 | 0.69 | 91% |
 | + drop year-like numbers | 0.47 | 0.17 | 0.25 | 0.71 | 90% |
-| **+ operation chosen from question wording** | 0.38 | **0.25** | **0.30** | 0.66 | 67% |
+| **+ operation chosen from question wording** | 0.38 | **0.25** | **0.30** | 0.66 | 81% |
 
 **Dropping years** removes whole numbers in 1900–2030 from the operand pool. Filing pages
 are full of them, they are never the answer, and they gave the search extra material to hit
@@ -401,13 +401,30 @@ targets with by chance.
 subtraction, "what percentage" a division — and searches only those. A question that gives
 no signal falls back to trying everything.
 
-Other variants we measured but did not adopt: restricting pairs to a single chunk
-(F1 0.31, accuracy 0.59) and rejecting answers reachable by more than *k* distinct
-calculations (F1 up to 0.49 at k=1, but accuracy falls to 0.48 and it flags 73% of all
-answers — approaching the flag-everything baseline rather than beating it).
+Other variants we measured but did not adopt: rejecting answers reachable by more than *k*
+distinct calculations (F1 up to 0.49 at k=1, but accuracy falls to 0.48 and it flags 73% of
+all answers — approaching the flag-everything baseline rather than beating it). Tightening
+the match tolerance behaves the same way — F1 rises to 0.33 at 0.01% while accuracy falls
+to 0.49.
 
-Tightening the match tolerance behaves the same way — F1 rises to 0.33 at 0.01% while
-accuracy falls to 0.49.
+**Restricting operands to a single chunk is the interesting rejection.** It scores F1 0.42,
+better than any configuration in the table above and still below the flag-everything
+baseline of 0.45 — but the gain is not detection. A chunk is one table *row*, so a question
+comparing two line items needs two chunks by construction, and 45% of our questions do. On
+correct answers whose gold derivation spans two or more chunks, the constraint wrongly
+flags **86%** of them, against 32% unrestricted. What it actually measures is "did this
+question need more than one table row", which correlates with hallucination only because
+harder questions are answered wrong more often. We report it as a worked example of a
+metric improving while the underlying behaviour gets worse.
+
+**Why no operand rule can fix this.** Unconstrained, 80% of answers fabricated with *no*
+supporting evidence are still derivable from the numbers on the page — against 79% of
+correct answers. Derivability carries essentially no information about grounding; a filing
+page simply has enough figures that some pair reaches almost any target within 1%. Given an
+oracle that restricts operands to the gold evidence chunks, fabrications fall to 27%
+derivable and the verifier reaches F1 0.53 — still below claude-haiku-4.5 at 0.54, which
+gets no such help. That oracle is the ceiling for any operand-selection scheme, and it
+requires knowing which chunk answers the question, which is most of the detection problem.
 
 **`entity_error` is still not detectable in general.** That category means the right kind
 of number for the wrong thing — the 2003 figure when the question asked for the change
@@ -416,8 +433,11 @@ check. Dropping years catches the subset where a model reports a year as an answ
 ours answered `-2017` to a percentage question), but the general case needs to know what
 each number represents.
 
-**Combined with the LLM judge** — flagging when either fires — recall rises to 0.70 and
-precision falls to 0.36, giving F1 0.47.
+**Combined with the LLM judge** — flagging when either fires — recall rises 0.49 → 0.63 and
+precision falls 0.61 → 0.50, for F1 0.56 against Claude's 0.54. That +0.02 is bought by
+flagging 37% of answers instead of 23%, and accuracy falls 0.76 → 0.71: the union adds 23
+true positives and 53 false ones. It is not evidence that the rule-based verifier
+contributes anything the judge lacks.
 
 → Full analysis, prompt iterations, and quoted judge reasoning:
 **[detection_dataset.md](detection_dataset.md)**
@@ -470,8 +490,8 @@ is a sounder question to put to an LLM.
 
 ## 7. Limitations
 
-- **Rows aren't independent.** 560 rows come from 119 questions — each appears up to 4
-  times, once per strategy, with the same evidence. Effective n is closer to 119.
+- **Rows aren't independent.** 560 rows come from 141 questions — each appears up to 4
+  times, once per strategy, with the same evidence. Effective n is closer to 141.
 - **Dev split only** for generation and detection. Test is held out; only retrieval has
   test-split numbers.
 - **One generator model.** Everything was answered by llama-3.3-70b. Prompt-strategy

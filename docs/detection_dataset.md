@@ -56,8 +56,8 @@ the results below interpretable:
 | arithmetic wrong | 120 | had the right evidence, computed wrongly |
 | fabricated | 41 | didn't have the evidence, answered anyway |
 
-560 rows from **119 unique questions** — each appears up to 4 times, once per strategy,
-with the *same* evidence. The rows are not independent; effective n is closer to 119.
+560 rows from **141 unique questions** — each appears up to 4 times, once per strategy,
+with the *same* evidence. The rows are not independent; effective n is closer to 141.
 
 Only 40 rows are skipped: the model got the right answer *without* the gold evidence, so
 we can't tell whether it guessed luckily or reached the figure another way.
@@ -230,16 +230,74 @@ reachable values means more wrong answers slipping through. So we constrained it
 |---|---|---|---|---|---|
 | all numbers, all operations | 0.38 | 0.11 | 0.17 | 0.69 | 91% |
 | + drop year-like numbers | 0.47 | 0.17 | 0.25 | 0.71 | 90% |
-| **+ operation from question wording** | 0.38 | **0.25** | **0.30** | 0.66 | 67% |
+| **+ operation from question wording** | 0.38 | **0.25** | **0.30** | 0.66 | 81% |
 
 Years (1900–2030) are never the answer and only give the search extra operands. Question
 wording says which calculation is wanted — "change in" implies subtraction, "what
 percentage" implies division — so we search only those.
 
-Variants measured and not adopted: pairs restricted to one chunk (F1 0.31, accuracy 0.59),
-and rejecting answers reachable more than *k* ways (F1 0.49 at k=1, but accuracy 0.48 and
-73% of answers flagged — that is drifting toward the flag-everything baseline, not beating
-it). Tightening the tolerance behaves the same way: F1 0.33 at 0.01%, accuracy 0.49.
+Variants measured and not adopted: rejecting answers reachable more than *k* ways (F1 0.49
+at k=1, but accuracy 0.48 and 73% of answers flagged — that is drifting toward the
+flag-everything baseline, not beating it). Tightening the tolerance behaves the same way:
+F1 0.33 at 0.01%, accuracy 0.49.
+
+### Restricting operands to one chunk: the most interesting thing we rejected
+
+Requiring both operands of a calculation to come from the same retrieved chunk **scores
+F1 0.42** — better than anything else here, and still under the flag-everything baseline
+of 0.45. We don't report it, and the reason is worth a paragraph in the write-up.
+
+> An earlier version of this file recorded this variant as F1 0.31. That was wrong; on the
+> 560-row set it is 0.42. The decision not to adopt it survives, but not for the reason
+> the original note implied.
+
+**A chunk is one table row**, not a whole table (see `src/data/chunking.py`). So any
+question comparing two different line items — revenue against expenses — needs two chunks
+by construction, and **45% of our questions do** (55 of 141 need two, 9 need three or
+more). Restricting operands to one chunk makes those derivations unreachable:
+
+| correct answers, by gold derivation | n | all operands | same chunk |
+|---|---|---|---|
+| fits in one chunk | 196 | 14% wrongly flagged | 20% |
+| **needs two or more chunks** | 129 | 32% | **86% wrongly flagged** |
+
+It wrongly flags **five of every six** correct answers whose derivation legitimately spans
+chunks. Its recall "gain" on hallucinations is the same effect seen from the other side —
++35% on multi-chunk rows, because it cannot derive anything cross-chunk and so flags nearly
+all of them.
+
+**So the F1 gain is not detection.** The constraint is a proxy for *"did this question need
+more than one table row"*, which correlates with hallucination only because harder
+questions get answered wrong more often. This is the cleanest example in the project of a
+metric improving while the thing being measured gets worse, and it is worth reporting as
+that rather than buried as a rejected variant.
+
+### Why none of this works: derivability is not evidence of grounding
+
+The diagnostic that explains the whole section. For each kind of row, how often does the
+search find *some* calculation that reaches the answer?
+
+| row type | n | all operands | operands from the gold chunks |
+|---|---|---|---|
+| correct answer | 325 | 79% | 70% |
+| arithmetic wrong | 120 | 72% | 48% |
+| **fabricated — no evidence at all** | 41 | **80%** | **27%** |
+
+**An answer invented with no supporting evidence is as derivable as a correct one — 80%
+against 79%.** The search is not detecting grounding; it is measuring how many numbers
+happen to be on the page. A filing page has enough figures that some pair of them reaches
+almost any target within 1%. That is the whole problem, and no choice of operands or
+operations fixes it, because the numbers being combined are real numbers from the page
+either way.
+
+The second column is an oracle: restrict operands to the chunks that actually contain the
+gold evidence. Fabrications collapse to 27% derivable and the verifier reaches **F1 0.53** —
+its ceiling. It is not implementable, because it requires knowing which chunk answers the
+question, which is most of what we are trying to detect. And even that ceiling is below
+claude-haiku-4.5 at 0.54, which gets no such help.
+
+So "the rule-based verifier can't be fixed by tuning" is a measurement, not a figure of
+speech: the best possible operand-selection scheme still loses to a small LLM.
 
 ### It still can't catch entity errors in general
 
@@ -254,9 +312,15 @@ tests.
 
 ### Combining it with the LLM judge doesn't help
 
-Flagging when *either* verifier fires: recall rises 0.49 → **0.70**, but precision drops to
-0.36, giving F1 **0.47** — below Claude alone at 0.54. Useful only if you care about recall
-much more than precision, e.g. queueing flagged answers for human review.
+Flagging when *either* verifier fires: recall rises 0.49 → **0.63**, precision drops 0.61 →
+0.50, giving F1 **0.56** against Claude's 0.54. That +0.02 is bought by flagging 37% of all
+answers instead of 23% — the union adds 23 true positives and 53 false ones. Accuracy falls
+0.76 → 0.71.
+
+Since F1 rises whenever a verifier flags more of a 29%-positive set, +0.02 at that cost is
+not evidence the rule-based verifier contributes anything the judge lacks. Useful only if
+you care about recall far more than precision, e.g. queueing flagged answers for human
+review.
 
 ## Prompt iterations
 
@@ -367,9 +431,9 @@ what code is good at (compare two numbers).
 > what the question needs. See the fabrication column in the headline section.
 >
 > Separately, pairing the LLM judge with the standalone rule-based verifier does **not**
-> help: recall rises to 0.70 but precision falls to 0.36 (F1 0.47, below Claude's 0.54).
-> Using the judge's *own* `computed_value` in a Python comparison does help; bolting on a
-> second, independent arithmetic searcher does not.
+> help: the union buys +0.02 F1 (0.54 → 0.56) by flagging 37% of answers instead of 23%,
+> while accuracy falls 0.76 → 0.71. Using the judge's *own* `computed_value` in a Python
+> comparison does help; bolting on a second, independent arithmetic searcher does not.
 
 ### Also worth noting
 
@@ -415,8 +479,8 @@ python scripts/score_detection.py --input data/runs/judge_v4_claude_haiku.jsonl
 
 ## Problems with this
 
-- **Rows aren't independent.** 560 rows, 119 questions. Report per-strategy numbers, or
-  treat n as ~119.
+- **Rows aren't independent.** 560 rows, 141 questions. Report per-strategy numbers, or
+  treat n as ~141.
 - **A lucky guess looks supported.** If the model gets the right number without really
   using the evidence, we label it supported. Probably rare.
 - **The judge grades the same model that wrote the answers** (llama-3.3-70b both sides).
@@ -425,10 +489,11 @@ python scripts/score_detection.py --input data/runs/judge_v4_claude_haiku.jsonl
 - **Categories are reported, not graded.** No per-category ground truth, so we can only
   say what the judge claimed: `numeric_error` 51, `unsupported_claim` 8, `abstention` 31,
   `supported` 386.
-- **The rule-based verifier can't be fixed by tuning.** Its ceiling is set by how many
-  numbers a filing page has, not by any parameter — see the tolerance sweep above. Making
-  it useful would mean parsing what each number *represents* (which year, which line item),
-  which is a different project.
+- **The rule-based verifier can't be fixed by tuning, and we can now say how much.** Given
+  an oracle that restricts operands to the gold evidence chunks it reaches F1 0.53, still
+  below claude-haiku-4.5 at 0.54. Its ceiling is set by how many numbers a filing page has,
+  not by any parameter. Making it useful would mean parsing what each number *represents*
+  (which year, which line item), which is a different project.
 - **Nobody re-ran the LLM judge after the fabrication rows were added at the v2 prompt.**
   v3 and v4 both use the fixed prompt on the full 560 rows, so they're comparable to each
   other; the v1/v2 prompt-iteration table is on the older 476-row set and shouldn't be
