@@ -257,17 +257,34 @@ and compares at ×1 / ×100 / ÷100 because FinQA writes percentages both ways.
 It re-derives rather than looks up because only **3.4%** of correct answers appear
 literally in their evidence, while **99.2%** of the numbers used in the calculation do.
 
-### 5.3 Results
+### 5.3 Two definitions, measured separately
+
+"Hallucination" can mean two different things here, and we report both because they are
+different tasks with different answers:
+
+| | **A — ungrounded answer** | **B — answered without evidence** |
+|---|---|---|
+| counts as a hallucination | any answer that doesn't follow from the evidence, including arithmetic errors | only answers given when the evidence lacked the necessary figures |
+| arithmetic error with correct evidence | hallucination | *not* a hallucination — a generation error |
+| positives | 161 of 560 (29%) | 41 of 560 (7%) |
+
+Definition A is what Member 2's taxonomy encodes (`numeric_error` = "the arithmetic is
+wrong relative to the evidence"). Definition B is the narrower reading: the model asserted
+something the page cannot support.
+
+Their F1 scores are **not comparable to each other** — the positive rates differ by 4×, and
+F1 depends on prevalence. Each is compared against its own flag-everything baseline.
+
+### 5.4 Results under definition A (ungrounded answer)
 
 | verifier | precision | recall | F1 | accuracy |
 |---|---|---|---|---|
-| Rule-based re-derivation | 0.38 | 0.11 | 0.17 | 0.69 |
+| Rule-based re-derivation | 0.38 | 0.25 | 0.30 | 0.66 |
 | LLM judge — llama-3.3-70b | 0.49 | 0.35 | 0.41 | 0.71 |
 | **LLM judge — claude-haiku-4.5** | **0.61** | **0.49** | **0.54** | **0.76** |
 | *baseline: flag everything* | 0.29 | 1.00 | 0.45 | 0.29 |
 
-*n = 560. The baseline calls every answer a hallucination; it is included because at a 29%
-positive rate F1 rewards recall, so it sets the bar any detector has to clear.*
+*n = 560. The best detector clears the baseline by 1.2×.*
 
 **Changing the judging model moved the result more than any other change.** Same prompt,
 same answers, same rows — only the model differs. llama-3.3-70b scores below the baseline
@@ -282,35 +299,122 @@ self-evaluation bias.
 
 | | arithmetic errors (n=120) | fabrications (n=41) | false alarms (n=325) |
 |---|---|---|---|
-| rule-based | 13% | 5% | 9% |
+| rule-based | 28% | 20% | 21% |
 | llama judge | 32% | 44% | 18% |
 | **claude judge** | **41%** | **73%** | 16% |
 
 The largest single gap is fabrications, 44% → 73% — the case where there is nothing to
 compute and the judge only has to notice the evidence doesn't contain the answer.
 
-### 5.4 Behaviour of the rule-based verifier
+### 5.5 The judge anchors on the answer it is grading
 
-It marks 91% of answers supported at the 1% tolerance. With 20–30 numbers on a page and 5
-operations over every ordered pair, the search reaches most targets: the space of
-computable values is large relative to how precisely we require a match.
+Decomposing Claude's 82 misses using the `computed_value` it reports:
 
-Sweeping the tolerance shows the effect directly:
+| cause | n | |
+|---|---|---|
+| never computed a value | 2 | 2% |
+| **computed a value, but it was wrong** | 58 | **71%** |
+| computed the right value, approved anyway | 18 | 22% |
 
-| tolerance | precision | recall | F1 | % marked supported |
+The dominant failure is the judge's own arithmetic being wrong *in a way that agrees with
+the model's wrong answer*. That is not a coincidence. On rows where the model was wrong —
+so the true answer and the candidate differ — the judge's own computation lands on:
+
+- the **candidate answer**: 57%
+- the **true answer**: 30%
+
+And the control is decisive:
+
+| | judge's arithmetic accuracy |
+|---|---|
+| model was right (answer = truth) | **90%** |
+| model was wrong (answer ≠ truth) | **30%** |
+
+The arithmetic is equally hard in both cases. A 60-point gap means the candidate answer is
+steering the computation: the judge reads `1095` in its prompt, computes `1095`, and
+concludes the answer checks out.
+
+This also explains an apparent contradiction. Claude's *improvement over llama* came from
+evidence assessment, not arithmetic (see below). But Claude's *remaining failures* are 71%
+arithmetic — because that arithmetic is contaminated, not because it is inherently weak.
+
+### 5.6 Results under definition B (answered without evidence)
+
+If the judge's arithmetic is unreliable on exactly the rows that matter, checking
+arithmetic with it is unsound. Definition B avoids the problem: deciding whether the
+evidence contains the necessary figures requires no computation at all.
+
+We added a second judge mode (`--mode evidence`) that asks only *"does this evidence
+contain what is needed to answer this question?"* — **and never shows the judge the
+candidate answer**, removing anchoring by construction rather than by instruction.
+
+| judge prompt | precision | recall | F1 | accuracy |
 |---|---|---|---|---|
-| 5% | 0.42 | 0.03 | 0.06 | 98% |
-| 1% (default) | 0.38 | 0.11 | 0.17 | 91% |
-| 0.1% | 0.29 | 0.32 | 0.30 | 68% |
-| 0.01% | 0.26 | 0.43 | 0.33 | 53% |
+| grounding — sees the answer, computes | 0.23 | **0.73** | 0.35 | 0.80 |
+| **evidence — no answer, no arithmetic** | **0.32** | 0.56 | **0.41** | **0.88** |
+| *baseline: flag everything* | 0.07 | 1.00 | 0.14 | 0.07 |
 
-Its best F1 across the sweep is 0.33, against 0.54 for the Claude judge and 0.45 for the
-flag-everything baseline.
+*n = 560, 41 positives. The evidence-mode judge clears its baseline by **2.9×** — the
+largest margin of any configuration in this project, against 1.2× under definition A.*
 
-It also returns no `entity_error` verdicts, and cannot: that category means the right kind
-of number for the wrong thing — 2002's figure when the question asked about 2003 — and any
-number printed on the page satisfies the "quoted directly" check. The branch was written,
-found unreachable, and removed; a test pins the behaviour.
+**Where the flags moved:**
+
+| row type | grounding | evidence |
+|---|---|---|
+| fabricated — the target | 73% | 56% |
+| arithmetic wrong | 41% | **15%** |
+| correct answer | 16% | **10%** |
+| refused, no evidence | 0% | 0% |
+
+The evidence-mode judge largely stopped flagging arithmetic errors and correct answers.
+That selectivity is where the precision and accuracy gains come from — it is answering the
+question it was asked rather than a general "does this look wrong".
+
+**The tradeoff is real:** recall fell 73% → 56%. Seeing the candidate answer did help the
+judge notice when an answer referenced figures that weren't on the page; removing it took
+that signal away along with the anchoring.
+
+Neither mode dominates. With 41 positives the F1 gap (0.35 → 0.41) is directional rather
+than conclusive.
+
+### 5.7 Behaviour of the rule-based verifier
+
+The first version marked **91% of all answers supported**. With every number on the page as
+an operand and 5 operations over every ordered pair, the search reaches most targets — the
+space of computable values is large relative to how precisely we require a match. Its recall
+was 0.11.
+
+Widening the search would make this worse, not better, so we constrained it instead. Two
+changes, measured on the 560-row set:
+
+| version | precision | recall | F1 | accuracy | % supported |
+|---|---|---|---|---|---|
+| all numbers, all operations | 0.38 | 0.11 | 0.17 | 0.69 | 91% |
+| + drop year-like numbers | 0.47 | 0.17 | 0.25 | 0.71 | 90% |
+| **+ operation chosen from question wording** | 0.38 | **0.25** | **0.30** | 0.66 | 67% |
+
+**Dropping years** removes whole numbers in 1900–2030 from the operand pool. Filing pages
+are full of them, they are never the answer, and they gave the search extra material to hit
+targets with by chance.
+
+**Choosing the operation from the question** reads the wording — "change in" implies a
+subtraction, "what percentage" a division — and searches only those. A question that gives
+no signal falls back to trying everything.
+
+Other variants we measured but did not adopt: restricting pairs to a single chunk
+(F1 0.31, accuracy 0.59) and rejecting answers reachable by more than *k* distinct
+calculations (F1 up to 0.49 at k=1, but accuracy falls to 0.48 and it flags 73% of all
+answers — approaching the flag-everything baseline rather than beating it).
+
+Tightening the match tolerance behaves the same way — F1 rises to 0.33 at 0.01% while
+accuracy falls to 0.49.
+
+**`entity_error` is still not detectable in general.** That category means the right kind
+of number for the wrong thing — the 2003 figure when the question asked for the change
+between 2003 and 2002. Any figure printed on the page satisfies the "quoted directly"
+check. Dropping years catches the subset where a model reports a year as an answer (one of
+ours answered `-2017` to a percentage question), but the general case needs to know what
+each number represents.
 
 **Combined with the LLM judge** — flagging when either fires — recall rises to 0.70 and
 precision falls to 0.36, giving F1 0.47.
@@ -344,13 +448,23 @@ itself computed differently:
 Fixing the prompt (bounded tolerance, arithmetic added to the false conditions, forced the
 judge to emit its computed value as a field) raised recall 0.21 → 0.32.
 
-**We blamed the wrong bottleneck.** We assumed the ceiling was arithmetic ability — a
-judge can't catch a wrong computation if it can't compute. Swapping to Claude disproved it:
-arithmetic accuracy barely moved (69% → 71%), and following through on its own number
-barely moved (84% → 88%), yet F1 rose 32%. The gain came from **evidence assessment** —
-noticing when the retrieved chunks don't contain what the question needs. That's what the
-fabrication column shows, and it's a cheaper property to buy than we assumed: Haiku is a
-small model and it beat a 70B one at this.
+**We blamed the wrong bottleneck, twice.** First we assumed the ceiling was arithmetic
+*ability* — a judge can't catch a wrong computation if it can't compute. Swapping to Claude
+disproved that: arithmetic accuracy barely moved (69% → 71%) and follow-through on its own
+number barely moved (84% → 88%), yet F1 rose 32%. The gain came from evidence assessment.
+
+Then we found the arithmetic wasn't weak at all — it was **contaminated**. The judge
+computes correctly 90% of the time when the model's answer happens to be right, and 30% of
+the time when it's wrong. It anchors on the answer it is checking (§5.5). Both of our
+earlier explanations were wrong about the mechanism, and only measuring `computed_value`
+against the truth separately for right and wrong answers exposed it.
+
+**We started with the wrong question.** Our whole detection setup asked "does this answer
+follow from the evidence?", which requires the judge to redo the arithmetic — the one thing
+it can't do reliably here. Asking instead "was there enough evidence to answer at all?"
+needs no arithmetic, can't be anchored, and clears its baseline by 2.9× against 1.2× for
+the original framing (§5.6). Both are reported; neither is strictly better, but the second
+is a sounder question to put to an LLM.
 
 ---
 

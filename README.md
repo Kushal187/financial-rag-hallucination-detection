@@ -54,16 +54,32 @@ of each other once the cross-encoder runs.
 Accuracy differences are not significant (all pairwise McNemar p ≥ 0.80). Latency differs
 5× and tracks output length.
 
-**Detection** — 560 labeled examples, 29% hallucinations:
+**Detection** — 560 labeled examples. We report two definitions of "hallucination", because
+they are different tasks and neither detector dominates.
+
+*A — any answer that doesn't follow from the evidence, including arithmetic errors*
+(161 positives, 29%):
 
 | verifier | precision | recall | F1 |
 |---|---|---|---|
-| rule-based re-derivation | 0.38 | 0.11 | 0.17 |
+| rule-based re-derivation | 0.38 | 0.25 | 0.30 |
 | LLM judge — llama-3.3-70b | 0.49 | 0.35 | 0.41 |
 | **LLM judge — claude-haiku-4.5** | **0.61** | **0.49** | **0.54** |
 | *baseline: flag everything* | 0.29 | 1.00 | 0.45 |
 
-Changing only the judging model moved F1 from 0.41 to 0.54 (paired McNemar p = 0.001).
+*B — answered despite insufficient evidence; arithmetic errors don't count*
+(41 positives, 7%):
+
+| judge prompt | precision | recall | F1 |
+|---|---|---|---|
+| grounding — sees the answer, computes | 0.23 | **0.73** | 0.35 |
+| **evidence — no answer shown, no arithmetic** | **0.32** | 0.56 | **0.41** |
+| *baseline: flag everything* | 0.07 | 1.00 | 0.14 |
+
+Two findings drive these. Changing only the *judging model* moved F1 from 0.41 to 0.54
+(paired McNemar p = 0.001). And the judge **anchors on the answer it is grading** — its own
+arithmetic is 90% accurate when the model was right but 30% when it was wrong. Asking a
+question that needs no arithmetic (definition B) clears its baseline by 2.9× against 1.2×.
 Full analysis in the [report](docs/REPORT.md).
 
 ## Setup

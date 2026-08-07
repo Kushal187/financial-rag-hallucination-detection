@@ -55,6 +55,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="JSONL of generated answers to judge")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--mode",
+        choices=["grounding", "evidence"],
+        default="grounding",
+        help="grounding: does the answer follow from the evidence (default). "
+        "evidence: was there enough evidence to answer at all — no arithmetic, and the "
+        "candidate answer is never shown to the judge",
+    )
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
@@ -75,7 +83,9 @@ def main() -> None:
     with open(out_path, "w", encoding="utf-8") as out_f:
         for i, row in enumerate(rows, 1):
             context = _context_for(row)
-            verdict = verify(row["question"], context, str(row.get("answer", "")))
+            verdict = verify(
+                row["question"], context, str(row.get("answer", "")), mode=args.mode
+            )
             verdict_counts["supported" if verdict["supported"] else "hallucinated"] += 1
             category_counts[verdict["category"]] += 1
 

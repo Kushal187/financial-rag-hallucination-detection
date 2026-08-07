@@ -22,7 +22,7 @@ import re
 
 from src.detection.llm_judge import _is_abstention
 
-__all__ = ["verify", "derive", "extract_numbers"]
+__all__ = ["verify", "derive", "extract_numbers", "operations_for"]
 
 _NUM = re.compile(r"-?\d[\d,]*\.?\d*")
 
@@ -30,17 +30,51 @@ _NUM = re.compile(r"-?\d[\d,]*\.?\d*")
 # LLM judge to use, so the two verifiers are held to the same standard.
 DEFAULT_TOL = 0.01
 
+# Words in the question that tell us which calculation is being asked for. Restricting
+# the search to those operations cuts out a lot of accidental matches.
+_OPERATION_WORDS = {
+    "subtract": ("change", "increase", "decrease", "difference", "growth", "grew", "decline"),
+    "percent": ("percent", "percentage", "%", "portion", "share", "ratio", "proportion"),
+    "divide": ("percent", "percentage", "%", "portion", "share", "ratio", "average", "per "),
+    "add": ("total", "sum", "combined", "average"),
+    "multiply": ("times", "product"),
+}
+_ALL_OPERATIONS = frozenset(_OPERATION_WORDS)
 
-def extract_numbers(context):
-    """Pull every number out of the evidence text."""
+
+def extract_numbers(context, drop_years=True):
+    """Pull the numbers out of the evidence text.
+
+    `drop_years` removes whole numbers between 1900 and 2030. Filing pages are full of
+    years, they're never what a question is asking for, and leaving them in gives the
+    search below a pile of extra operands to hit the answer with by accident. Dropping
+    them raised precision from 0.38 to 0.47 on our evaluation set.
+    """
     numbers = []
     for _chunk_id, text in context:
         for match in _NUM.findall(str(text)):
             try:
-                numbers.append(float(match.replace(",", "")))
+                value = float(match.replace(",", ""))
             except ValueError:
-                pass
+                continue
+            if drop_years and value == int(value) and 1900 <= value <= 2030:
+                continue
+            numbers.append(value)
     return numbers
+
+
+def operations_for(question):
+    """Which calculations the question is asking for, based on its wording.
+
+    "what is the change in X" wants a subtraction; "what percentage of X" wants a
+    division. Searching only the relevant operations is both faster and more accurate —
+    it stops us "deriving" an answer by multiplying two unrelated figures together.
+
+    Falls back to trying everything when the wording gives us nothing to go on.
+    """
+    text = (question or "").lower()
+    picked = {op for op, words in _OPERATION_WORDS.items() if any(w in text for w in words)}
+    return picked or set(_ALL_OPERATIONS)
 
 
 def _same(a, b, tol):
@@ -58,15 +92,21 @@ def _same(a, b, tol):
     return False
 
 
-def derive(target, numbers, tol=DEFAULT_TOL):
+def derive(target, numbers, tol=DEFAULT_TOL, operations=None):
     """Try to build `target` out of `numbers`. Returns how, or None if we can't.
 
-    Only tries one operation on at most two numbers. That covers about 59% of FinQA
-    questions — the rest need several steps chained together, and this will not find
-    those. That limitation is real and shows up in the results.
+    `operations` limits which calculations to try — pass the result of
+    `operations_for(question)`. Defaults to all of them.
+
+    Only one operation on at most two numbers, which covers about 59% of FinQA questions.
+    The rest chain several steps together and this won't find them. Note that widening
+    the search does *not* help: the verifier already accepts too much (see the tolerance
+    sweep in docs/detection_dataset.md), so more reachable values means more wrong answers
+    slipping through, not fewer.
     """
     if target is None:
         return None
+    ops = _ALL_OPERATIONS if operations is None else operations
 
     for a in numbers:
         if _same(target, a, tol):
@@ -76,15 +116,15 @@ def derive(target, numbers, tol=DEFAULT_TOL):
         for b in numbers:
             if a is b:
                 continue
-            if _same(target, a - b, tol):
+            if "subtract" in ops and _same(target, a - b, tol):
                 return f"{a:g} - {b:g}"
-            if _same(target, a + b, tol):
+            if "add" in ops and _same(target, a + b, tol):
                 return f"{a:g} + {b:g}"
-            if b and _same(target, a / b, tol):
+            if "divide" in ops and b and _same(target, a / b, tol):
                 return f"{a:g} / {b:g}"
-            if b and _same(target, (a - b) / b, tol):
+            if "percent" in ops and b and _same(target, (a - b) / b, tol):
                 return f"({a:g} - {b:g}) / {b:g}   [percent change]"
-            if _same(target, a * b, tol):
+            if "multiply" in ops and _same(target, a * b, tol):
                 return f"{a:g} * {b:g}"
     return None
 
@@ -130,15 +170,16 @@ def verify(question, context, answer, tol=DEFAULT_TOL):
         # yes/no and other non-numeric answers can't be checked this way.
         return verdict(True, "supported", "Answer is not a number, so we cannot check it.")
 
-    found = derive(target, numbers, tol)
+    found = derive(target, numbers, tol, operations_for(question))
     if found:
         return verdict(True, "supported", f"The answer can be computed: {found}", found)
 
-    # Note there is no `entity_error` branch. That category means "right number, wrong
-    # thing" — e.g. reporting 2002's figure when the question asked about 2003. We cannot
-    # detect it: any number printed on the page passes the "quoted directly" check above,
-    # so a wrong-but-present number always looks supported. Catching it would need to know
-    # what each number *means*, which is exactly what this approach doesn't do.
+    # There is no `entity_error` branch. That category means "right kind of number, wrong
+    # thing" — reporting the 2003 figure when asked for the change between 2003 and 2002.
+    # Any figure printed on the page passes the "quoted directly" check above, so it looks
+    # supported. Dropping years catches the subset where the model reports a year as an
+    # answer, but the general case needs to know what each number represents, which this
+    # approach doesn't.
     return verdict(
         False,
         "numeric_error",

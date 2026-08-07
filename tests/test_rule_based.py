@@ -11,9 +11,14 @@ EVIDENCE = [("table_1", "the finished goods of 2003 is $ 384.3 ; the finished go
 # ---- pulling numbers out of the evidence ---- #
 
 
-def test_extract_numbers_reads_the_figures():
-    # Years count as numbers too — we have no way to tell 2003 from a dollar figure.
-    assert extract_numbers(EVIDENCE) == [2003.0, 384.3, 2002.0, 206.7]
+def test_extract_numbers_reads_the_figures_and_skips_years():
+    # 2003 and 2002 are dropped — filing pages are full of years and they only give the
+    # derivation search extra operands to hit the answer with by accident.
+    assert extract_numbers(EVIDENCE) == [384.3, 206.7]
+
+
+def test_extract_numbers_can_keep_years_if_asked():
+    assert extract_numbers(EVIDENCE, drop_years=False) == [2003.0, 384.3, 2002.0, 206.7]
 
 
 def test_extract_numbers_handles_thousands_separators():
@@ -72,16 +77,22 @@ def test_an_underivable_answer_is_flagged():
     assert v["category"] == "numeric_error"
 
 
-def test_known_limitation_a_number_lifted_off_the_page_looks_supported():
-    """This verifier cannot catch "right number, wrong thing" errors.
+def test_a_year_reported_as_an_answer_is_flagged():
+    # Dropping years from the operand pool means 2002 is no longer "quoted directly",
+    # so this is caught. Real models do this — one of ours answered -2017 to a
+    # percentage question.
+    assert verify("what is the change?", EVIDENCE, "2002")["supported"] is False
 
-    2002 is a year, not the answer to "what is the change?" — but it is printed on the
-    page, so the quoted-directly check accepts it. Spotting this would need to know what
-    each number *means*, which pure arithmetic can't. Pinned here so the gap is visible
-    rather than surprising.
+
+def test_known_limitation_a_figure_lifted_off_the_page_still_looks_supported():
+    """We can't catch "right figure, wrong question" when the figure isn't a year.
+
+    384.3 is the 2003 finished-goods value, not the *change* the question asked for. It's
+    printed on the page, so the quoted-directly check accepts it. Spotting this needs to
+    know what each number represents, which arithmetic alone can't. Pinned so the gap
+    stays visible.
     """
-    v = verify("what is the change?", EVIDENCE, "2002")
-    assert v["supported"] is True
+    assert verify("what is the change?", EVIDENCE, "384.3")["supported"] is True
 
 
 def test_refusing_to_answer_is_supported():

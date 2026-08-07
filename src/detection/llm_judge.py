@@ -64,6 +64,72 @@ _JUDGE_SYSTEM = (
 )
 
 
+_EVIDENCE_SYSTEM = (
+    "You are checking whether a financial question CAN BE ANSWERED from the evidence "
+    "provided. You are not checking anyone's answer, and you are not answering the "
+    "question yourself.\n\n"
+    "Rules:\n"
+    "- Do NOT do any arithmetic. Do NOT work out the answer. Decide only whether the "
+    "figures the question needs are present.\n"
+    "- Financial answers are computed, not quoted: a percentage is part / whole, a change "
+    "is one year minus another. So the evidence is SUFFICIENT when it contains the values "
+    "such a calculation would need, even though the final number will not appear anywhere "
+    "on the page. Do not require the answer itself to be present.\n"
+    "- The evidence is INSUFFICIENT when a figure the question asks about is missing — a "
+    "year that isn't shown, a line item that isn't listed, one side of a comparison that "
+    "isn't there.\n"
+    "- Judge only what is in front of you. Never use outside knowledge about the company.\n\n"
+    "Respond ONLY with valid json (no prose, no code fences) with exactly these keys: "
+    '"sufficient" (boolean), "missing" (one short phrase naming what is absent, or "" '
+    'when sufficient), "confidence" (0.0-1.0).'
+)
+
+
+def build_evidence_messages(question: str, context: list[tuple[str, str]]) -> list[dict]:
+    """Prompt for the evidence-sufficiency check.
+
+    Note what is *not* here: the candidate answer. The judge cannot anchor on a number it
+    never sees, which is the failure mode that dominates the grounding-mode judge — there,
+    its own arithmetic agrees with the candidate 57% of the time on wrong answers, versus
+    30% with the truth.
+    """
+    user = (
+        f"Evidence:\n{format_context(context)}\n\n"
+        f"Question: {question}\n\n"
+        "Does this evidence contain what is needed to answer the question? "
+        "Respond with the json object."
+    )
+    return [
+        {"role": "system", "content": _EVIDENCE_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+def parse_evidence_verdict(raw: object) -> dict:
+    """Parse the evidence-sufficiency reply into the shared verdict shape."""
+    obj = parse_json_object(raw) or {}
+    sufficient = bool(obj.get("sufficient", False))
+
+    confidence = obj.get("confidence", 0.0)
+    try:
+        confidence = max(0.0, min(1.0, float(confidence)))
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    missing = str(obj.get("missing", ""))
+    return {
+        "supported": sufficient,
+        "partial": False,
+        # An answer given when the evidence lacks the necessary figures is the
+        # out_of_context case: the model produced something the page cannot support.
+        "category": SUPPORTED_CATEGORY if sufficient else "out_of_context",
+        "computed_value": None,
+        "confidence": confidence,
+        "reasoning": "Evidence is sufficient." if sufficient else f"Evidence is missing: {missing}",
+        "cited_evidence": [],
+    }
+
+
 def build_judge_messages(question: str, context: list[tuple[str, str]], answer: str) -> list[dict]:
     """Build the judge prompt. Deliberately excludes the gold answer."""
     user = (
@@ -129,9 +195,23 @@ def verify(
     context: list[tuple[str, str]],
     answer: str,
     temperature: float = 0.0,
+    mode: str = "grounding",
 ) -> dict:
     """Return a verdict dict: ``{supported, partial, category, confidence, reasoning,
-    cited_evidence, latency_ms}``. Abstentions are short-circuited (no LLM call)."""
+    cited_evidence, latency_ms}``. Abstentions are short-circuited (no LLM call).
+
+    Two modes, answering two different questions:
+
+    ``grounding`` (default)
+        "Does this answer follow from this evidence?" The judge computes the answer
+        itself and compares. Catches both bad arithmetic and invented figures, but its
+        own arithmetic is unreliable here — see build_evidence_messages.
+
+    ``evidence``
+        "Was there enough evidence to answer at all?" No arithmetic, and the candidate
+        answer is never shown. Only catches answers given without the necessary figures,
+        but cannot be anchored by the answer it is checking.
+    """
     if _is_abstention(answer):
         return {
             "supported": True,
@@ -143,11 +223,17 @@ def verify(
             "latency_ms": 0.0,
         }
 
-    messages = build_judge_messages(question, context, answer)
+    if mode == "evidence":
+        messages = build_evidence_messages(question, context)
+        parse = parse_evidence_verdict
+    else:
+        messages = build_judge_messages(question, context, answer)
+        parse = parse_verdict
+
     start = time.perf_counter()
     raw = chat_json(messages, temperature=temperature)
     latency_ms = (time.perf_counter() - start) * 1000.0
 
-    verdict = parse_verdict(raw)
+    verdict = parse(raw)
     verdict["latency_ms"] = round(latency_ms, 1)
     return verdict

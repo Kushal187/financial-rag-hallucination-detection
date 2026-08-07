@@ -1,7 +1,7 @@
 # Hallucination evaluation set (Stage 4, Member 3)
 
-The labeled dataset we use to test the hallucination verifiers, plus results for
-Member 2's LLM judge.
+The labeled dataset we use to test the hallucination verifiers, plus results for both of
+them — the LLM judge and the rule-based verifier.
 
 - Built by [`scripts/build_detection_set.py`](../scripts/build_detection_set.py)
 - Dataset: `data/processed/detection_eval.jsonl` (560 rows)
@@ -12,22 +12,24 @@ Member 2's LLM judge.
 We don't hand-label anything. We take answers the pipeline already generated and work out
 the label from data we already have:
 
-| gold evidence retrieved? | answer correct? | label |
+| gold evidence retrieved? | what the model did | label |
 |---|---|---|
-| yes | yes | supported |
-| yes | no | hallucinated |
-| no | — | skip the row |
+| yes | correct answer | **supported** |
+| yes | wrong answer | **hallucinated** — it had what it needed |
+| no | refused to answer | **supported** — refusing without evidence is correct |
+| no | wrong answer | **hallucinated** — it had nothing to work from |
+| no | correct answer | *skipped* |
 
-The skip matters. If retrieval never found the right chunk, the model may have read the
-wrong chunk perfectly well and still given a wrong answer. That's a retrieval problem, not
-a hallucination, so counting it would blame the detector for someone else's mistake.
+Only the last case is skipped. If the evidence wasn't there and the model still got it
+right, we can't tell whether it guessed luckily or reached the figure another way, so the
+label would be a coin flip.
 
-"Correct" comes from `answers_match()`, which `compare_prompts.py` already ran. We just
-read its `correct` field, so our labels can't disagree with the accuracy numbers the rest
-of the project reports.
+"Correct" comes from `answers_match()`, which `compare_prompts.py` already ran. We read its
+`correct` field rather than recomputing, so these labels can't drift from the accuracy
+numbers the rest of the project reports.
 
-Refusals ("I cannot determine the answer...") count as supported — refusing is the safe
-option, not a hallucination.
+Refusals count as supported in both evidence cases — declining is the safe failure mode,
+not a hallucination.
 
 ## What's in the dataset
 
@@ -73,15 +75,14 @@ prompt, same answers — only the judging model changes:
 
 | verifier | precision | recall | F1 | accuracy |
 |---|---|---|---|---|
-| rule-based re-derivation | 0.38 | 0.11 | 0.17 | 0.69 |
+| rule-based re-derivation | 0.38 | 0.25 | 0.30 | 0.66 |
 | llama-3.3-70b (also wrote the answers) | 0.49 | 0.35 | 0.41 | 0.71 |
 | **claude-haiku-4.5** | **0.61** | **0.49** | **0.54** | **0.76** |
 | "flag every answer as hallucinated" | 0.29 | 1.00 | 0.45 | 0.29 |
 
-This flips the conclusion. With llama judging llama the detector is **worse than a
-one-line baseline** that flags everything (0.41 vs 0.45) — i.e. not worth deploying. Swap
-in Claude Haiku and it clears the baseline comfortably (0.54). Same evidence, same
-candidate answers, same prompt.
+With llama judging llama the detector scores below the flag-everything baseline (0.41 vs
+0.45). With Claude Haiku it scores above it (0.54). Same evidence, same candidate answers,
+same prompt — only the model differs.
 
 The gains are significant on paired tests over the same rows (McNemar):
 
@@ -98,9 +99,9 @@ answers, Claude grades them.
 
 | kind | rule-based | llama | claude | n |
 |---|---|---|---|---|
-| arithmetic wrong, had the evidence | 13% | 32% | **41%** | 120 |
-| fabricated, evidence missing | 5% | 44% | **73%** | 41 |
-| false alarms on correct answers | 9% | 18% | 16% | 325 |
+| arithmetic wrong, had the evidence | 28% | 32% | **41%** | 120 |
+| fabricated, evidence missing | 20% | 44% | **73%** | 41 |
+| false alarms on correct answers | 21% | 18% | 16% | 325 |
 
 **The big gain is fabrications (44% → 73%).** That is the case where there is nothing to
 compute — the answer simply isn't in the evidence, and the judge only has to notice.
@@ -127,6 +128,84 @@ That is a cheaper property to buy than we assumed — Haiku is a small model.
 (74 of the 560 rows are refusals the judge short-circuits with no API call. They're
 correct by construction and inflate accuracy slightly.)
 
+### The judge anchors on the answer it is grading
+
+Breaking down Claude's 82 misses by what its own `computed_value` said:
+
+| cause | n | |
+|---|---|---|
+| never computed a value | 2 | 2% |
+| **computed a value, but it was wrong** | 58 | **71%** |
+| computed the right value, approved anyway | 18 | 22% |
+
+So most misses happen because the judge's own arithmetic was wrong *in a way that agreed
+with the model's wrong answer*. That is not chance. On rows where the model was wrong — so
+the true answer and the candidate are different numbers — the judge's own computation lands
+on the **candidate answer 57%** of the time and the **true answer 30%**.
+
+The control settles it:
+
+| | judge's arithmetic accuracy |
+|---|---|
+| model was right (answer = truth) | **90%** |
+| model was wrong (answer ≠ truth) | **30%** |
+
+The arithmetic is equally hard either way. A 60-point gap means the candidate answer is
+steering the computation — the judge reads `1095` in its prompt, computes `1095`, and
+concludes the answer checks out.
+
+This resolves the apparent contradiction above. Claude's *improvement over llama* came from
+evidence assessment, not arithmetic. Its *remaining failures* are 71% arithmetic — because
+that arithmetic is contaminated by seeing the answer, not because it is inherently weak.
+
+It also motivates the next section: if the judge can't be trusted to redo the maths, don't
+ask it to.
+
+## A second question: was there even enough evidence?
+
+The judge's arithmetic is unreliable on exactly the rows that matter (see above), so
+checking arithmetic with it is unsound. A narrower definition avoids the problem: count an
+answer as a hallucination only when the evidence lacked the figures needed to answer at
+all. Deciding that requires no computation.
+
+`--mode evidence` asks only *"does this evidence contain what is needed to answer this
+question?"* and **never shows the judge the candidate answer**, so anchoring is impossible
+by construction rather than by instruction.
+
+Scored on the 41 rows where evidence was missing and the model answered anyway
+(7% positive rate, so a flag-everything baseline scores F1 0.14):
+
+| judge prompt | precision | recall | F1 | accuracy |
+|---|---|---|---|---|
+| grounding — sees the answer, computes | 0.23 | **0.73** | 0.35 | 0.80 |
+| **evidence — no answer, no arithmetic** | **0.32** | 0.56 | **0.41** | **0.88** |
+
+**2.9× the baseline**, against 1.2× for the original framing — the largest margin in the
+project. Where the flags moved:
+
+| row type | grounding | evidence |
+|---|---|---|
+| fabricated — the target | 73% | 56% |
+| arithmetic wrong | 41% | **15%** |
+| correct answer | 16% | **10%** |
+| refused, no evidence | 0% | 0% |
+
+It largely stopped flagging arithmetic errors and correct answers, which is where the
+precision came from — it now answers the question it was asked rather than a general "does
+this look wrong". The cost is recall on the target class, 73% → 56%: seeing the answer did
+help it spot references to figures that weren't there.
+
+With 41 positives the F1 gap is directional, not conclusive. Both definitions are reported
+because they ask genuinely different questions.
+
+Run it with:
+
+```bash
+LLM_PROVIDER=bedrock BEDROCK_MODEL=us.anthropic.claude-haiku-4-5-20251001-v1:0 \
+    python scripts/run_llm_judge.py --input data/processed/detection_eval.jsonl \
+    --mode evidence --out data/runs/judge_v5_evidence_mode.jsonl
+```
+
 ## The rule-based verifier
 
 `src/detection/rule_based.py` — no LLM. It tries to **re-derive** the answer from the
@@ -137,31 +216,41 @@ candidate answer within tolerance.
 It had to re-derive rather than look up, because only **3.4%** of correct answers appear
 literally in their evidence, while **99.2%** of the numbers used in the calculation do.
 
-**It scores F1 0.17 — the worst of the three, and worse than the trivial baseline.**
+**It scores F1 0.30 — the lowest of the three, and below the trivial baseline (0.45).**
 
-### Why: almost everything is derivable
+### The first version approved 91% of everything
 
-At the 1% tolerance we hold the LLM judge to, **91% of all answers pass**. With 20–30
-numbers on a page and 5 operations, the search reaches nearly any target by accident.
-Tightening the tolerance confirms the cause:
+With every number on the page as an operand and 5 operations over every ordered pair, the
+search reaches most targets by accident. Recall was 0.11.
 
-| tolerance | precision | recall | F1 | % approved |
-|---|---|---|---|---|
-| 5% | 0.42 | 0.03 | 0.06 | 98% |
-| 1% (default) | 0.38 | 0.11 | 0.17 | 91% |
-| 0.1% | 0.29 | 0.32 | 0.30 | 68% |
-| **0.01%** | 0.26 | **0.43** | **0.33** | 53% |
+Widening the search (three-number combinations, more operations) makes this *worse* — more
+reachable values means more wrong answers slipping through. So we constrained it instead:
 
-Even at its best it loses to both LLM judges and to "flag everything" (0.45).
+| version | precision | recall | F1 | accuracy | % approved |
+|---|---|---|---|---|---|
+| all numbers, all operations | 0.38 | 0.11 | 0.17 | 0.69 | 91% |
+| + drop year-like numbers | 0.47 | 0.17 | 0.25 | 0.71 | 90% |
+| **+ operation from question wording** | 0.38 | **0.25** | **0.30** | 0.66 | 67% |
 
-### It structurally cannot catch entity errors
+Years (1900–2030) are never the answer and only give the search extra operands. Question
+wording says which calculation is wanted — "change in" implies subtraction, "what
+percentage" implies division — so we search only those.
 
-`entity_error` means the right kind of number for the wrong thing — reporting 2002's figure
-when the question asked about 2003. This verifier can never flag it: any number printed on
-the page passes the "quoted directly" check, so a wrong-but-present number always looks
-supported. Catching it needs to know what each number *means*. That branch was written,
-found to be unreachable, and removed — the limitation is pinned by
-`test_known_limitation_a_number_lifted_off_the_page_looks_supported`.
+Variants measured and not adopted: pairs restricted to one chunk (F1 0.31, accuracy 0.59),
+and rejecting answers reachable more than *k* ways (F1 0.49 at k=1, but accuracy 0.48 and
+73% of answers flagged — that is drifting toward the flag-everything baseline, not beating
+it). Tightening the tolerance behaves the same way: F1 0.33 at 0.01%, accuracy 0.49.
+
+### It still can't catch entity errors in general
+
+`entity_error` means the right kind of number for the wrong thing — reporting the 2003
+figure when the question asked for the change between 2003 and 2002. Any figure printed on
+the page passes the "quoted directly" check, so it looks supported.
+
+Dropping years catches the subset where a model reports a *year* as an answer, which does
+happen — one of ours answered `-2017` to a percentage question. The general case needs to
+know what each number represents. Both the fixed case and the remaining gap are pinned by
+tests.
 
 ### Combining it with the LLM judge doesn't help
 

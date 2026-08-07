@@ -65,7 +65,9 @@ def score(rows):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="judged file from run_llm_judge.py")
-    parser.add_argument("--skip-near-miss", action="store_true", help="ignore answers within 10% of gold")
+    # Note the doubled %% — argparse treats a lone % in help text as a format specifier.
+    parser.add_argument("--skip-near-miss", action="store_true",
+                        help="ignore answers within 10%% of the right answer")
     args = parser.parse_args()
 
     rows = [json.loads(line) for line in open(args.input, encoding="utf-8") if line.strip()]
