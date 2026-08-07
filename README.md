@@ -97,6 +97,7 @@ Fill in `.env`:
 | `LLM_PROVIDER` | `groq` (free, 100K tokens/day) or `bedrock` (AWS, no cap) |
 | `GROQ_API_KEY` | if using Groq |
 | `AWS_REGION`, `BEDROCK_MODEL` | if using Bedrock — uses your normal AWS credentials |
+| `JUDGE_MODEL` | which model grades the answers, when it shouldn't be the one that wrote them |
 | `WEAVIATE_URL`, `WEAVIATE_API_KEY` | vector store for dense/hybrid retrieval |
 
 Both providers run the same `llama-3.3-70b`, so results stay comparable either way.
@@ -107,6 +108,32 @@ Build the data (takes a few minutes, no API calls):
 python scripts/build_corpus.py --splits train dev test
 python scripts/ingest_weaviate.py --recreate --split train dev test
 ```
+
+## Demo
+
+One command runs the whole system end to end and prints what each stage did:
+
+```bash
+python demo.py             # live — Weaviate + cross-encoder + LLM (~6 API calls)
+python demo.py --offline   # no credentials, no network: replays data/runs/*.jsonl
+```
+
+Set `JUDGE_MODEL` (or pass `--judge-model`) to have a different model grade the answers
+than the one that wrote them — the configuration the detection results are measured in,
+and the difference between F1 0.41 and 0.54. Without it the generator marks its own
+homework, and the demo says so before it starts.
+
+It walks two real FinQA questions through retrieval → generation → detection. On the
+first, retrieval finds the right table row, the model computes `637 / 5.0 = 127.4`, and
+both verifiers confirm the answer follows from the evidence. On the second, the row the
+question needs never makes it into the top 5, the model answers anyway, and all three
+checks flag it — including the evidence-mode judge, which is never shown the answer and
+names the missing figure instead. It closes by scoring every verifier over the full
+560-row labeled set, computed at run time rather than quoted from the report.
+
+Each stage falls back to the recorded run it would have reproduced when a credential or
+service is missing, and says so on the line where it does it, so `python demo.py` works
+on a fresh clone with an empty `.env`.
 
 ## Running the experiments
 
@@ -124,12 +151,13 @@ python scripts/run_rule_verifier.py --input data/processed/detection_eval.jsonl 
 python scripts/run_llm_judge.py --input data/processed/detection_eval.jsonl      # 1 call/row
 python scripts/score_detection.py --input data/runs/judge_detection_eval.jsonl   # free
 
-python -m pytest                                                # 109 tests
+python -m pytest                                                # 117 tests
 ```
 
 ## Layout
 
 ```
+demo.py        the whole pipeline on two questions, in one run
 src/
   data/        chunking + loading the processed corpus
   retrieval/   bm25 · dense · hybrid · rerank (all share one retrieve() contract)
