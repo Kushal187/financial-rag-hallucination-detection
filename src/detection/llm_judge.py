@@ -37,14 +37,19 @@ _JUDGE_SYSTEM = (
     "the answer is true just because it sounds plausible.\n"
     "- Financial answers are usually COMPUTED from the evidence, not quoted verbatim: "
     "a percentage = part / whole, a change = A - B, a growth rate, a ratio, an average, "
-    "a share of a total. An answer is SUPPORTED if the values needed for that "
-    "computation appear in the evidence AND the answer is consistent with performing it "
-    "(allow for rounding). Do NOT mark an answer unsupported just because its final "
-    "number does not appear literally in the evidence.\n"
-    "- Before judging, perform the likely calculation yourself using numbers from the "
-    "evidence and compare your result to the answer.\n"
-    "- supported=false ONLY when the answer relies on a value NOT in the evidence, cites "
-    "the wrong entity/unit, or invents information.\n"
+    "a share of a total. Do NOT mark an answer unsupported just because its final number "
+    "does not appear literally in the evidence — it usually will not.\n"
+    "- Work out the answer yourself first, using numbers from the evidence, and put that "
+    'number in "computed_value" (null if the question is not numeric). Then compare it '
+    "to the candidate answer.\n"
+    "- An answer is SUPPORTED only if BOTH hold: the values needed appear in the "
+    "evidence, AND your computed value matches the candidate answer within 1%.\n"
+    "- Set supported=false when the answer uses a value not in the evidence, uses the "
+    "wrong entity/year/line item, invents information, OR when your computed value "
+    "differs from the candidate by more than 1%. A wrong result derived from the right "
+    "numbers is still unsupported — that is exactly what numeric_error means. Never "
+    "excuse a gap larger than 1% as rounding, a unit misunderstanding, or 'the evidence "
+    "still supports the calculation'.\n"
     "- An answer that declines ('I cannot determine') is supported=true with category "
     '"abstention" — it is not a hallucination.\n\n'
     "Categories (use when supported=false):\n"
@@ -52,9 +57,10 @@ _JUDGE_SYSTEM = (
     + '\n\nSet "confidence" (0.0-1.0) to how clearly the evidence supports your verdict. '
     "Respond ONLY with valid json (no prose, no code fences) with exactly these keys: "
     '"supported" (boolean), "partial" (boolean), "category" (one of the category names '
-    'above, or "supported" when supported=true), "confidence" (0.0-1.0), "reasoning" '
-    '(one sentence), "cited_evidence" (list of evidence local_ids like "text_3"/'
-    '"table_1" that back the answer, or []).'
+    'above, or "supported" when supported=true), "computed_value" (the number your own '
+    'calculation produced, or null), "confidence" (0.0-1.0), "reasoning" (one sentence), '
+    '"cited_evidence" (list of evidence local_ids like "text_3"/"table_1" that back the '
+    "answer, or [])."
 )
 
 
@@ -101,6 +107,10 @@ def parse_verdict(raw: object) -> dict:
         "supported": supported,
         "partial": bool(obj.get("partial", False)),
         "category": str(category),
+        # The value the judge's own calculation produced. Kept so we can check whether it
+        # actually compared its result to the candidate answer, rather than deciding the
+        # evidence "supports the calculation" and waving the mismatch through.
+        "computed_value": obj.get("computed_value"),
         "confidence": confidence,
         "reasoning": str(obj.get("reasoning", "")),
         "cited_evidence": _coerce_cited(obj.get("cited_evidence")),

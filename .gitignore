@@ -217,5 +217,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Generation / detection run outputs (per-row JSONL) — large, regenerable artifacts
-data/runs/
+# Experiment outputs live in data/runs/. Which of them are tracked is decided by
+# data/.gitignore — the JSONLs the report cites are committed, scratch runs are not.

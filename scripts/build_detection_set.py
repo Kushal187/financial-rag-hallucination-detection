@@ -4,12 +4,20 @@ Takes answers our RAG pipeline already generated and labels each one as supporte
 hallucinated, so we can measure how well the verifiers work.
 
 The rule:
-    gold evidence was retrieved + answer correct  ->  supported
-    gold evidence was retrieved + answer wrong    ->  hallucinated
-    gold evidence was NOT retrieved               ->  skip the row
+    gold evidence retrieved + answer correct  ->  supported
+    gold evidence retrieved + answer wrong    ->  hallucinated  (it had what it needed)
+    gold evidence MISSING   + refused         ->  supported     (refusing is the right call)
+    gold evidence MISSING   + answer wrong    ->  hallucinated  (it made something up)
+    gold evidence MISSING   + answer correct  ->  skip the row
 
-We skip the last case because the model may have read a wrong chunk correctly. That's a
-retrieval problem, not a hallucination, so counting it either way would be unfair.
+Only the last case gets skipped. If the evidence wasn't there and the model still got it
+right, we can't tell whether it guessed luckily or found the answer some other way, so
+the label would be a coin flip.
+
+The "evidence missing" rows matter a lot: that's where the model invents things. One of
+ours answered '-2017' to a percentage question — it grabbed a year off the page and
+reported it as a financial figure. Dropping those rows would leave the dataset with only
+arithmetic slips and none of the outright fabrication a detector most needs to catch.
 
 Usage:
     python scripts/build_detection_set.py \
@@ -44,13 +52,22 @@ def label_row(row, gold_ids, k):
     """Return (supported, reason). `supported` is None when we should skip the row."""
     if not gold_ids:
         return None, "no_gold_evidence"
-    if recall_at_k(row.get("retrieved_ids", []), gold_ids, k) < 1.0:
-        return None, "incomplete_retrieval"
+
+    has_evidence = recall_at_k(row.get("retrieved_ids", []), gold_ids, k) == 1.0
+
+    # Refusing is the safe failure mode either way — it's never a hallucination.
     if declined(row):
-        return True, "abstention"
+        return True, "abstention" if has_evidence else "abstention_no_evidence"
+
+    if has_evidence:
+        return (True, "correct") if row.get("correct") else (False, "wrong_despite_evidence")
+
+    # No gold evidence in the context. A wrong answer here had nothing to stand on, so
+    # it's a fabrication. A *right* answer is ambiguous — lucky guess, or the figure was
+    # reachable some other way — so we can't label it and skip it.
     if row.get("correct"):
-        return True, "correct"
-    return False, "wrong_despite_evidence"
+        return None, "correct_without_evidence"
+    return False, "fabricated_without_evidence"
 
 
 def build(run_paths, k):
@@ -87,6 +104,9 @@ def build(run_paths, k):
                     "gold_answer_exe": qa["gold_answer_exe"],
                     "gold_evidence_ids": qa["gold_evidence_ids"],
                     "retriever": run.get("retriever"),
+                    # Kept so results can be split by prompt strategy — one question can
+                    # appear several times here, once per strategy that answered it.
+                    "strategy": run.get("strategy"),
                     "abstained": declined(run),
                 }
             )

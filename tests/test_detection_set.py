@@ -35,17 +35,37 @@ def test_wrong_answer_with_the_evidence_is_a_hallucination():
     assert reason == "wrong_despite_evidence"
 
 
-def test_we_skip_rows_where_retrieval_missed_the_evidence():
-    # The model might have read the wrong chunk correctly, so we can't call this a
-    # hallucination. This skip is the whole reason the rule works.
+def test_wrong_answer_without_the_evidence_is_a_fabrication():
+    # It had nothing to work from and still produced a number. This is the clearest
+    # kind of hallucination, and the one a detector most needs to catch.
     supported, reason = label_row(make_row(["text_9"], False), ["table_1"], k=5)
-    assert supported is None
-    assert reason == "incomplete_retrieval"
+    assert supported is False
+    assert reason == "fabricated_without_evidence"
 
 
-def test_we_skip_rows_where_only_some_evidence_was_found():
-    supported, _ = label_row(make_row(["table_1"], False), ["table_1", "table_2"], k=5)
+def test_partial_evidence_counts_as_missing():
+    # Two gold chunks needed, only one retrieved -> the answer wasn't derivable.
+    supported, reason = label_row(make_row(["table_1"], False), ["table_1", "table_2"], k=5)
+    assert supported is False
+    assert reason == "fabricated_without_evidence"
+
+
+def test_refusing_without_the_evidence_is_supported():
+    # Declining when you don't have the facts is exactly right, not a hallucination.
+    supported, reason = label_row(
+        make_row(["text_9"], False, answer="I cannot determine the answer from the provided evidence."),
+        ["table_1"],
+        k=5,
+    )
+    assert supported is True
+    assert reason == "abstention_no_evidence"
+
+
+def test_right_answer_without_the_evidence_is_skipped():
+    # Lucky guess or reachable another way — we can't tell, so we don't label it.
+    supported, reason = label_row(make_row(["text_9"], True), ["table_1"], k=5)
     assert supported is None
+    assert reason == "correct_without_evidence"
 
 
 def test_refusing_to_answer_counts_as_supported():

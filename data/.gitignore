@@ -10,3 +10,18 @@ processed/*
 !raw/finqa/
 !raw/finqa/*.json
 !processed/*.jsonl
+
+# Experiment outputs the report cites. Small (~5 MB total) and they're the evidence
+# behind every number in docs/REPORT.md, so they belong in git.
+# Note the directory itself has to be re-included first — git won't look inside a
+# folder excluded by the `*` on line 2.
+!runs/
+runs/*
+!runs/*.jsonl
+
+# ...except these two. (Comments must be on their own line — a trailing "#" is
+# treated as part of the pattern, not a comment.)
+# 5-row smoke test, not cited anywhere:
+runs/judge_sanity.jsonl
+# byte-identical copy of judge_v1_original_prompt.jsonl:
+runs/judge_detection_eval.jsonl

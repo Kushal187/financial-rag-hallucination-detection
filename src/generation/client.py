@@ -17,7 +17,15 @@ from groq import Groq
 
 load_dotenv()
 
-_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+# Which backend to call. Both run llama-3.3-70b, so results stay comparable;
+# bedrock has no daily token cap, groq is free but limited to 100K tokens/day.
+_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
+
+if _PROVIDER == "bedrock":
+    _MODEL = os.getenv("BEDROCK_MODEL", "us.meta.llama3-3-70b-instruct-v1:0")
+else:
+    _MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
 _client: Groq | None = None
 
 # Retryable exception classes (resolved defensively in case the SDK renames any).
@@ -62,6 +70,16 @@ def chat(
     max_tokens: int = 512,
     response_format: dict | None = None,
 ) -> str:
+    if _PROVIDER == "bedrock":
+        from src.generation import bedrock
+
+        return bedrock.chat(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            force_json=bool(response_format),
+        )
+
     def call():
         return get_client().chat.completions.create(
             model=_MODEL,
