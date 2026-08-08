@@ -232,7 +232,7 @@ excluded the clearest hallucinations in the dataset — the `-2017` example is o
 
 ### 5.2 The two verifiers
 
-Both implement the same interface (`src/detection/protocol.py`), so one script scores
+Both share the same `verify(question, context, answer)` signature, so one script scores
 either:
 
 ```python

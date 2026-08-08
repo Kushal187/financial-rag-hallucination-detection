@@ -1,22 +1,9 @@
-"""Hallucination category taxonomy for the detection stage.
+"""Hallucination categories.
 
-The primary signal is binary — ``supported: bool`` (is the answer grounded in the
-retrieved evidence?) — so the LLM judge and Member 1's rule-based verifier can be
-scored head-to-head. ``category`` is the analytical layer: *why* an unsupported
-answer is unsupported. Five categories, kept disjoint so a judge doesn't have three
-buckets to put the same case in (``fabrication`` is folded into ``out_of_context``).
+The primary signal is binary (``supported``) so the two verifiers can be scored
+head-to-head; ``category`` records why an unsupported answer is unsupported. The
+descriptions below are fed to the LLM judge.
 """
-
-__all__ = ["CATEGORY_LIST", "CATEGORIES", "DEFAULT_CATEGORY", "SUPPORTED_CATEGORY"]
-
-# Order matters only for display; categories are mutually exclusive per verdict.
-CATEGORY_LIST = [
-    "numeric_error",
-    "entity_error",
-    "unsupported_claim",
-    "out_of_context",
-    "abstention",
-]
 
 CATEGORIES = {
     "numeric_error": (
@@ -40,5 +27,5 @@ CATEGORIES = {
     ),
 }
 
-DEFAULT_CATEGORY = "unsupported_claim"      # used when an unsupported verdict has no category
-SUPPORTED_CATEGORY = "supported"            # category label when supported == True
+DEFAULT_CATEGORY = "unsupported_claim"
+SUPPORTED_CATEGORY = "supported"

@@ -15,7 +15,7 @@ weaviate-client>=4.9
 
 
 groq>=0.9
-# AWS Bedrock backend (same llama-3.3-70b, no daily token cap) — see src/generation/bedrock.py
+# AWS Bedrock backend (same llama-3.3-70b, no daily token cap) 
 boto3>=1.34
 
 
@@ -24,4 +24,3 @@ nltk>=3.8
 
 
 jupyter>=1.0
-pytest>=8.0

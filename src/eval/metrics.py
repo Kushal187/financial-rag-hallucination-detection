@@ -1,19 +1,10 @@
-"""Evaluation metrics for the FinQA RAG + hallucination-detection pipeline.
+"""Retrieval metrics for the FinQA RAG pipeline.
 
-Retrieval metrics live here. `evaluate_retriever` is retriever-agnostic: it takes a
-`retrieve(question, doc_id, k) -> ranked local_ids` function, so dense, BM25, hybrid and
-the cross-encoder reranker are all scored by the same harness (and their numbers stay
-comparable).
-
-Retrieval is the expensive step once a reranker is in the mix (a cross-encoder runs
-~`pool` forward passes per question, versus one vector lookup). So the harness splits
-into `collect_rankings`, which retrieves **once** per question, and pure aggregators
-over those records — recall, per-type recall, latency — none of which re-retrieve.
-
-Still to implement in later stages:
-  - generation:  numeric-tolerant exact match (FinQA answers are mostly numbers)
-                 -- lives in src/generation/answer.py::answers_match for now
-  - detection:   precision / recall / f1
+`evaluate_retriever` takes any `retrieve(question, doc_id, k) -> ranked local_ids`
+function, so BM25, dense, hybrid and the reranker are scored by the same harness and
+their numbers stay comparable. Retrieval happens once per question in `collect_rankings`;
+everything else is a pure aggregation over those records, which matters once a
+cross-encoder is in the mix and retrieval is the expensive step.
 """
 
 import time
@@ -21,11 +12,8 @@ from collections.abc import Callable, Sequence
 
 
 def recall_at_k(retrieved_ids: Sequence[str], gold_ids: Sequence[str], k: int) -> float:
-    """Per-query recall@k: fraction of gold evidence ids found in the top-k retrieved ids.
-
-    `|gold ∩ top_k| / |gold|`. Returns 1.0 when there is no gold evidence (vacuously
-    complete), so such rows don't drag the average down.
-    """
+    """Fraction of gold evidence ids found in the top-k. Returns 1.0 when there is no gold
+    evidence, so those rows don't drag the average down."""
     gold = set(gold_ids)
     if not gold:
         return 1.0
@@ -40,10 +28,8 @@ def collect_rankings(
 ) -> list[dict]:
     """Run `retrieve_fn` once per question at depth `k`, keeping the ranking and latency.
 
-    Every metric below is derived from these records instead of re-retrieving, and any
-    k' <= k is a prefix slice of `ranked`. Keeping the raw rankings around also makes
-    failure analysis possible (which questions did a reranker help or hurt?) without
-    paying for retrieval a second time.
+    Any k' <= k is then a prefix slice of `ranked`, and keeping the rankings makes failure
+    analysis possible without retrieving again.
 
     Returns `[{"id", "doc_id", "gold_evidence_ids", "ranked", "latency_ms"}, ...]`.
     """
@@ -54,8 +40,7 @@ def collect_rankings(
         latency_ms = (time.perf_counter() - start) * 1000.0
         records.append(
             {
-                # `id` is only needed to join records back to questions for failure
-                # analysis; synthetic rows in tests don't carry one.
+                # optional; only used to join records back to questions
                 "id": row.get("id"),
                 "doc_id": row["doc_id"],
                 "gold_evidence_ids": list(row["gold_evidence_ids"]),
@@ -69,11 +54,10 @@ def collect_rankings(
 def summarize_rankings(
     records: list[dict], ks: Sequence[int] = (1, 5, 10)
 ) -> dict[int, dict[str, float]]:
-    """Aggregate `collect_rankings` output into recall@k / full@k for each k in `ks`.
+    """Aggregate `collect_rankings` output into recall@k and full@k for each k in `ks`.
 
-    Returns `{k: {"recall": mean per-query recall@k,
-                  "full":   fraction of questions with ALL gold evidence in the top-k}}`.
-    "full" matters for FinQA: a question is only answerable if every gold fact is retrieved.
+    `full` is the fraction of questions with *all* their gold evidence in the top-k, which
+    is what decides whether a FinQA question is answerable at all.
     """
     out: dict[int, dict[str, float]] = {}
     for k in sorted(ks):
@@ -92,20 +76,16 @@ def evaluate_retriever(
 ) -> dict[int, dict[str, float]]:
     """Score a retriever over QA rows, reporting recall@k for each k in `ks`.
 
-    `retrieve_fn(question, doc_id, k)` must return ranked chunk local_ids. Retrieval runs
-    once per question at the largest k, then each k is a prefix slice — so cost is one
-    retrieval per question, not one per k.
+    Retrieval runs once per question at the largest k, then each k is a prefix slice, so
+    the cost is one retrieval per question rather than one per k.
     """
     ks = tuple(sorted(ks))
     return summarize_rankings(collect_rankings(retrieve_fn, qa_rows, max(ks)), ks)
 
 
 def _gold_type(local_id: str) -> str:
-    """`"table_3" -> "table"`, `"text_1" -> "text"`.
-
-    The chunk type is encoded in the `local_id` prefix (docs/data_schema.md), so this
-    needs no corpus lookup.
-    """
+    """`"table_3" -> "table"`. The chunk type is encoded in the local_id prefix, so this
+    needs no corpus lookup."""
     return local_id.split("_", 1)[0]
 
 
@@ -114,15 +94,12 @@ def per_type_recall(
 ) -> dict[str, dict[int, float]]:
     """Recall@k split by gold evidence type (`table` vs `text`).
 
-    ~60% of FinQA gold evidence is table-only (docs/dataset_stats.json), and linearized
-    table rows are near-duplicates of one another — so a retriever can look healthy
-    overall while being much weaker on exactly the rows that decide the answer. This
-    separates the two.
+    Most FinQA gold evidence is table-only and linearized table rows look alike, so a
+    retriever can score well overall while being much weaker on the rows that actually
+    decide the answer.
 
-    Micro-averaged over gold *items*, not questions: a question with mixed evidence
-    contributes to both buckets.
-
-    Returns `{"table": {k: recall}, "text": {k: recall}}`.
+    Micro-averaged over gold items rather than questions, so a question with mixed
+    evidence counts in both buckets. Returns `{"table": {k: recall}, "text": {k: recall}}`.
     """
     ks = tuple(sorted(ks))
     # type -> k -> [found, total]
@@ -152,12 +129,8 @@ def compare_retrievers(
     ks: Sequence[int] = (1, 5, 10),
     latency_by_name: dict[str, float] | None = None,
 ) -> str:
-    """Render a markdown comparison table, paste-ready for docs/.
-
-    Recall@k for every k, then Full@k at the largest k (the "is this question even
-    answerable" number), then optional mean latency so an accuracy gain can be read
-    against what it costs.
-    """
+    """Render a markdown comparison table: recall@k for each k, full@k at the largest k,
+    and mean latency when it is supplied, so an accuracy gain can be read against its cost."""
     ks = tuple(sorted(ks))
     max_k = max(ks) if ks else 0
 

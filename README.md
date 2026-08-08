@@ -150,8 +150,6 @@ python scripts/build_detection_set.py --runs data/runs/prompts_dev_rerank.jsonl 
 python scripts/run_rule_verifier.py --input data/processed/detection_eval.jsonl  # free
 python scripts/run_llm_judge.py --input data/processed/detection_eval.jsonl      # 1 call/row
 python scripts/score_detection.py --input data/runs/judge_detection_eval.jsonl   # free
-
-python -m pytest                                                # 117 tests
 ```
 
 ## Layout

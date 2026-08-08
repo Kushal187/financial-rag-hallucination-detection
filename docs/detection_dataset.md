@@ -307,8 +307,7 @@ the page passes the "quoted directly" check, so it looks supported.
 
 Dropping years catches the subset where a model reports a *year* as an answer, which does
 happen — one of ours answered `-2017` to a percentage question. The general case needs to
-know what each number represents. Both the fixed case and the remaining gap are pinned by
-tests.
+know what each number represents.
 
 ### Combining it with the LLM judge doesn't help
 
