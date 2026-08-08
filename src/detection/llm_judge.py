@@ -1,17 +1,9 @@
-"""LLM-as-a-judge hallucination verifier (Stage 4, Member 2).
+"""LLM-as-a-judge hallucination verifier.
 
-Decides whether a generated answer is **supported by the retrieved evidence** — which
-is the right definition of "not hallucinated" for RAG (an answer can be supported by
-evidence yet still numerically wrong vs the gold label; that's a generation error, not
-a hallucination, and the two metrics are reported separately).
-
-Design choices:
-- The judge NEVER sees the gold answer (that would make verification circular).
-- Binary primary verdict ``supported`` for head-to-head parity with Member 1's
-  rule-based verifier; ``category`` is the analytical layer.
-- Structured (JSON) output for parseable, consistent verdicts.
-- Obvious abstentions are short-circuited (supported=True, category="abstention")
-  without an LLM call — an abstention is the safe failure mode, not a hallucination.
+Decides whether an answer is supported by the retrieved evidence, not whether it matches
+the gold label: an answer can follow from the evidence and still be numerically wrong,
+which is a generation error rather than a hallucination. The judge never sees the gold
+answer, since that would make the check circular.
 """
 
 import time
@@ -24,8 +16,6 @@ from src.detection.categories import (
 from src.generation.answer import parse_json_object
 from src.generation.client import chat_json
 from src.generation.context import format_context
-
-__all__ = ["verify", "parse_verdict", "build_judge_messages"]
 
 _ABSTENTION_PHRASES = ("cannot determine", "i cannot determine", "not enough", "insufficient")
 
@@ -86,13 +76,8 @@ _EVIDENCE_SYSTEM = (
 
 
 def build_evidence_messages(question: str, context: list[tuple[str, str]]) -> list[dict]:
-    """Prompt for the evidence-sufficiency check.
-
-    Note what is *not* here: the candidate answer. The judge cannot anchor on a number it
-    never sees, which is the failure mode that dominates the grounding-mode judge — there,
-    its own arithmetic agrees with the candidate 57% of the time on wrong answers, versus
-    30% with the truth.
-    """
+    """Prompt for the evidence-sufficiency check. Deliberately excludes the answer, so
+    the judge cannot anchor its own arithmetic on the number it is checking."""
     user = (
         f"Evidence:\n{format_context(context)}\n\n"
         f"Question: {question}\n\n"
@@ -120,8 +105,7 @@ def parse_evidence_verdict(raw: object) -> dict:
     return {
         "supported": sufficient,
         "partial": False,
-        # An answer given when the evidence lacks the necessary figures is the
-        # out_of_context case: the model produced something the page cannot support.
+        # Answering without the necessary figures is the out_of_context case.
         "category": SUPPORTED_CATEGORY if sufficient else "out_of_context",
         "computed_value": None,
         "confidence": confidence,
@@ -151,11 +135,6 @@ def _coerce_cited(raw) -> list[str]:
 
 
 def parse_verdict(raw: object) -> dict:
-    """Parse the judge's JSON into a normalized verdict, filling sane defaults.
-
-    Robust to code fences, trailing prose, and missing keys — a run must never crash
-    on a malformed judge response.
-    """
     obj = parse_json_object(raw) or {}
     supported = bool(obj.get("supported", False))
 
@@ -173,9 +152,7 @@ def parse_verdict(raw: object) -> dict:
         "supported": supported,
         "partial": bool(obj.get("partial", False)),
         "category": str(category),
-        # The value the judge's own calculation produced. Kept so we can check whether it
-        # actually compared its result to the candidate answer, rather than deciding the
-        # evidence "supports the calculation" and waving the mismatch through.
+        # Kept so we can check the judge actually compared its own result to the answer.
         "computed_value": obj.get("computed_value"),
         "confidence": confidence,
         "reasoning": str(obj.get("reasoning", "")),
@@ -183,7 +160,7 @@ def parse_verdict(raw: object) -> dict:
     }
 
 
-def _is_abstention(answer: str) -> bool:
+def is_abstention(answer: str) -> bool:
     a = (answer or "").strip().lower()
     if not a:
         return True
@@ -197,22 +174,8 @@ def verify(
     temperature: float = 0.0,
     mode: str = "grounding",
 ) -> dict:
-    """Return a verdict dict: ``{supported, partial, category, confidence, reasoning,
-    cited_evidence, latency_ms}``. Abstentions are short-circuited (no LLM call).
-
-    Two modes, answering two different questions:
-
-    ``grounding`` (default)
-        "Does this answer follow from this evidence?" The judge computes the answer
-        itself and compares. Catches both bad arithmetic and invented figures, but its
-        own arithmetic is unreliable here — see build_evidence_messages.
-
-    ``evidence``
-        "Was there enough evidence to answer at all?" No arithmetic, and the candidate
-        answer is never shown. Only catches answers given without the necessary figures,
-        but cannot be anchored by the answer it is checking.
-    """
-    if _is_abstention(answer):
+    
+    if is_abstention(answer):
         return {
             "supported": True,
             "partial": False,

@@ -1,37 +1,25 @@
-"""Rule-based hallucination verifier (Stage 4, Member 1).
+"""Rule-based hallucination verifier.
 
-Checks an answer by trying to **re-derive** it from the numbers in the evidence. If we
-can find a calculation that produces the answer, we call it supported. If nothing we try
-gets there, the answer didn't come from the evidence.
+Checks an answer by trying to re-derive it from the numbers in the evidence: if some
+calculation over those numbers reaches the answer, it counts as supported. Looking the
+number up instead would not work, because FinQA answers are almost never printed on the
+page. The operations tried are the ones the FinQA dev programs actually use, plus percent
+change.
 
-Why re-derive instead of just looking the number up? Because FinQA answers are almost
-never written on the page. We measured it: only **3.4%** of correct answers appear
-literally in their evidence, but **99.2%** of the numbers *used in the calculation* do. So
-"is this number in the evidence?" would reject 96% of correct answers. We have to redo the
-maths instead.
-
-Which calculations we try comes from the FinQA dev programs themselves — divide is 64% of
-them, subtract 19%, add 6%, multiply 5.5% — plus percent change, which is the single most
-common shape in the dataset.
-
-Same `verify(question, context, answer)` signature as the LLM judge (see
-src/detection/protocol.py), so both can be scored by the same script.
+Same verify(question, context, answer) signature as the LLM judge, so one scoring script
+grades either one unchanged.
 """
 
 import re
 
-from src.detection.llm_judge import _is_abstention
-
-__all__ = ["verify", "derive", "extract_numbers", "operations_for"]
+from src.detection.llm_judge import is_abstention
 
 _NUM = re.compile(r"-?\d[\d,]*\.?\d*")
 
-# Answers this far apart count as the same number. 1% matches the tolerance we tell the
-# LLM judge to use, so the two verifiers are held to the same standard.
+
 DEFAULT_TOL = 0.01
 
-# Words in the question that tell us which calculation is being asked for. Restricting
-# the search to those operations cuts out a lot of accidental matches.
+
 _OPERATION_WORDS = {
     "subtract": ("change", "increase", "decrease", "difference", "growth", "grew", "decline"),
     "percent": ("percent", "percentage", "%", "portion", "share", "ratio", "proportion"),
@@ -46,9 +34,7 @@ def extract_numbers(context, drop_years=True):
     """Pull the numbers out of the evidence text.
 
     `drop_years` removes whole numbers between 1900 and 2030. Filing pages are full of
-    years, they're never what a question is asking for, and leaving them in gives the
-    search below a pile of extra operands to hit the answer with by accident. Dropping
-    them raised precision from 0.38 to 0.47 on our evaluation set.
+    years and they only give `derive` extra operands to hit the answer with by accident.
     """
     numbers = []
     for _chunk_id, text in context:
@@ -64,25 +50,17 @@ def extract_numbers(context, drop_years=True):
 
 
 def operations_for(question):
-    """Which calculations the question is asking for, based on its wording.
-
-    "what is the change in X" wants a subtraction; "what percentage of X" wants a
-    division. Searching only the relevant operations is both faster and more accurate —
-    it stops us "deriving" an answer by multiplying two unrelated figures together.
-
-    Falls back to trying everything when the wording gives us nothing to go on.
-    """
+    """Which calculations the question is asking for, based on its wording: "the change
+    in X" wants a subtraction, "what percentage of X" a division. Falls back to all of
+    them when the wording gives nothing to go on."""
     text = (question or "").lower()
     picked = {op for op, words in _OPERATION_WORDS.items() if any(w in text for w in words)}
     return picked or set(_ALL_OPERATIONS)
 
 
 def _same(a, b, tol):
-    """Are these the same number? Also checks x100 and /100.
-
-    FinQA writes percentages both ways — '93.5%' is stored as 0.935 but '24.69%' is
-    stored as 24.69 — so a raw comparison would reject correct answers.
-    """
+    """Are these the same number? Also checks x100 and /100, because FinQA stores '93.5%'
+    as 0.935 but '24.69%' as 24.69, so a raw comparison would reject correct answers."""
     if a is None or b is None:
         return False
     for scale in (1.0, 100.0, 0.01):
@@ -93,16 +71,13 @@ def _same(a, b, tol):
 
 
 def derive(target, numbers, tol=DEFAULT_TOL, operations=None):
-    """Try to build `target` out of `numbers`. Returns how, or None if we can't.
+    """Try to build `target` out of `numbers`. Returns the derivation, or None.
 
-    `operations` limits which calculations to try — pass the result of
-    `operations_for(question)`. Defaults to all of them.
+    `operations` limits which calculations to try; pass `operations_for(question)`.
 
-    Only one operation on at most two numbers, which covers about 59% of FinQA questions.
-    The rest chain several steps together and this won't find them. Note that widening
-    the search does *not* help: the verifier already accepts too much (see the tolerance
-    sweep in docs/detection_dataset.md), so more reachable values means more wrong answers
-    slipping through, not fewer.
+    One operation on at most two numbers. Multi-step FinQA programs are out of reach, but
+    widening the search makes things worse rather than better: the verifier already
+    accepts too much, so more reachable values means more wrong answers slipping through.
     """
     if target is None:
         return None
@@ -141,11 +116,8 @@ def _parse(text):
 
 
 def verify(question, context, answer, tol=DEFAULT_TOL):
-    """Decide whether `answer` can be derived from `context`.
-
-    Returns the same shape as the LLM judge's verdict so score_detection.py can grade
-    either one without changes.
-    """
+    """Decide whether `answer` can be derived from `context`, in the LLM judge's verdict
+    shape."""
     def verdict(supported, category, reasoning, derivation=None):
         return {
             "supported": supported,
@@ -158,7 +130,7 @@ def verify(question, context, answer, tol=DEFAULT_TOL):
             "derivation": derivation,
         }
 
-    if _is_abstention(str(answer)):
+    if is_abstention(str(answer)):
         return verdict(True, "abstention", "The model declined to answer.")
 
     numbers = extract_numbers(context)
@@ -174,12 +146,6 @@ def verify(question, context, answer, tol=DEFAULT_TOL):
     if found:
         return verdict(True, "supported", f"The answer can be computed: {found}", found)
 
-    # There is no `entity_error` branch. That category means "right kind of number, wrong
-    # thing" — reporting the 2003 figure when asked for the change between 2003 and 2002.
-    # Any figure printed on the page passes the "quoted directly" check above, so it looks
-    # supported. Dropping years catches the subset where the model reports a year as an
-    # answer, but the general case needs to know what each number represents, which this
-    # approach doesn't.
     return verdict(
         False,
         "numeric_error",
