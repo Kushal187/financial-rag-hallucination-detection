@@ -1,12 +1,3 @@
-"""
-FinQA Dataset Exploration Script
---------------------------------
-Loads train/dev/test splits from data/raw/finqa/ and prints statistics
-needed for docs/dataset.md. Also writes docs/dataset_stats.json.
-
-Run from the repo root:
-    python scripts/explore_dataset.py
-"""
 
 import json
 import re
@@ -47,19 +38,16 @@ def summarize(vals):
 def analyze_split(name, data):
     stats = {"split": name, "n_examples": len(data)}
 
-    # Top-level field presence
     field_counts = Counter()
     for ex in data:
         field_counts.update(ex.keys())
     stats["top_level_fields"] = dict(field_counts)
 
-    # qa sub-field presence
     qa_field_counts = Counter()
     for ex in data:
         qa_field_counts.update((ex.get("qa") or {}).keys())
     stats["qa_fields"] = dict(qa_field_counts)
 
-    # Text / table sizes
     pre_lens = [len(ex.get("pre_text", [])) for ex in data]
     post_lens = [len(ex.get("post_text", [])) for ex in data]
     table_rows = [len(ex.get("table", [])) for ex in data]
@@ -69,18 +57,15 @@ def analyze_split(name, data):
     stats["table_rows"] = summarize(table_rows)
     stats["table_cols"] = summarize(table_cols)
 
-    # Question length
     q_lens = [len(ex["qa"]["question"].split())
               for ex in data if ex.get("qa", {}).get("question")]
     stats["question_words"] = summarize(q_lens)
 
-    # Answer types
     ans_types = Counter()
     for ex in data:
         ans_types[classify_answer(ex.get("qa", {}).get("answer"))] += 1
     stats["answer_types"] = dict(ans_types)
 
-    # Program operations
     op_counts = Counter()
     n_ops_per_prog = []
     for ex in data:
@@ -92,7 +77,6 @@ def analyze_split(name, data):
     stats["operations"] = dict(op_counts.most_common())
     stats["ops_per_program"] = summarize(n_ops_per_prog)
 
-    # Gold evidence
     gold_text_only = gold_table_only = gold_both = gold_missing = 0
     n_gold_items = []
     for ex in data:
@@ -116,7 +100,6 @@ def analyze_split(name, data):
         "items_per_example": summarize(n_gold_items),
     }
 
-    # Companies / years from filename
     companies = Counter()
     years = Counter()
     for ex in data:
@@ -129,7 +112,6 @@ def analyze_split(name, data):
     stats["top_10_companies"] = dict(companies.most_common(10))
     stats["year_distribution"] = dict(sorted(years.items()))
 
-    # answer vs exe_ans sanity
     mismatches = 0
     checked = 0
     for ex in data:

@@ -1,16 +1,4 @@
-"""Run the LLM-as-a-judge hallucination verifier over generated answers.
 
-Reads a JSONL of generated answers (the output of compare_prompts.py, or Member 3's
-controlled-hallucination set), judges each answer against its retrieved evidence, and
-writes an augmented JSONL plus verdict/category distribution tables.
-
-If input rows carry a ``gold_supported`` boolean (Member 3's controlled set), it also
-reports precision/recall/F1 treating "hallucinated" (supported=false) as the positive
-class — so the LLM judge and Member 1's rule-based verifier are directly comparable.
-
-Usage:
-    python scripts/run_llm_judge.py --input data/runs/gen_dev_bm25_k5_*.jsonl --limit 50
-"""
 
 import argparse
 import json
@@ -37,7 +25,6 @@ def _read_jsonl(path: str) -> list[dict]:
 
 
 def _context_for(row: dict) -> list[tuple[str, str]]:
-    """Prefer an explicit ``context`` field; else rebuild from doc_id + retrieved_ids."""
     ctx = row.get("context")
     if isinstance(ctx, list) and ctx and isinstance(ctx[0], (list, tuple)):
         return [(str(a), str(b)) for a, b in ctx]
@@ -77,7 +64,7 @@ def main() -> None:
     print(f"Judging {len(rows)} answers from {args.input}")
     verdict_counts = Counter()
     category_counts = Counter()
-    tp = fp = fn = 0  # positive class = hallucinated (supported == False)
+    tp = fp = fn = 0  
     has_labels = False
 
     with open(out_path, "w", encoding="utf-8") as out_f:

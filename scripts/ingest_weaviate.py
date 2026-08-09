@@ -1,11 +1,3 @@
-"""Embed the processed FinQA chunks and load them into Weaviate Cloud.
-
-Usage:
-    python scripts/ingest_weaviate.py --recreate            # full ingest
-    python scripts/ingest_weaviate.py --recreate --limit 500  # smoke test
-
-Requires WEAVIATE_URL, WEAVIATE_API_KEY (and optionally EMBED_MODEL) in .env.
-"""
 
 import argparse
 import os
