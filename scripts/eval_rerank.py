@@ -1,23 +1,3 @@
-"""Ablate cross-encoder reranking against the first-stage retrievers on FinQA.
-
-Everything here is offline — no Groq calls — so the whole sweep is free to re-run as
-often as you like. Reports, for each configuration:
-
-  * Recall@k / Full@k          vs the bm25 / dense / hybrid baselines
-  * pool sweep                 how much over-fetching before reranking actually buys
-  * base ablation              cross-encoder over a hybrid pool vs over a BM25 pool
-  * per-type recall            table rows vs text sentences (60% of gold is table-only)
-  * ms/query                   what the accuracy costs in latency
-  * failure analysis           questions the reranker fixed, and ones it broke
-
-Mirrors scripts/sweep_hybrid_alpha.py's shape (argparse, functools.partial to bind
-retriever params, try/finally to close Weaviate).
-
-Usage:
-    python scripts/eval_rerank.py --split dev --limit 100
-    python scripts/eval_rerank.py --split dev --pools 10 20 30 50 --bases hybrid bm25
-    python scripts/eval_rerank.py --split dev --out docs/rerank_results.md
-"""
 
 import argparse
 import functools
@@ -70,11 +50,6 @@ def _configs(args) -> list[tuple[str, Callable[[str, str, int], list[str]]]]:
 
 
 def _flips(baseline_records: list[dict], variant_records: list[dict], k: int):
-    """Questions whose recall@k changed between two retrievers.
-
-    Returns `(wins, losses)` — the reranker pulled gold evidence into the top-k, or
-    pushed it out. Aggregate recall hides both; for the write-up we want the cases.
-    """
     baseline_by_id = {r["id"]: r for r in baseline_records}
     wins, losses = [], []
     for rec in variant_records:
@@ -148,7 +123,6 @@ def main() -> None:
     print(f"\n## Retrieval comparison ({args.split}, n={len(qa)})\n")
     print(table)
 
-    # Per-type breakdown: does reranking help table rows and text sentences equally?
     type_lines = [
         "| retriever | " + " | ".join(f"table@{k} | text@{k}" for k in ks) + " |",
         "|" + "|".join(["---"] * (1 + 2 * len(ks))) + "|",
@@ -164,7 +138,6 @@ def main() -> None:
     print(f"\n## Recall@k by gold evidence type ({args.split}, n={len(qa)})\n")
     print(type_table)
 
-    # Failure analysis: best rerank config vs the strongest first-stage baseline.
     rerank_labels = [n for n in results_by_name if n.startswith("rerank")]
     baseline_label = next((n for n in results_by_name if n.startswith("hybrid")), None)
     flip_summary = ""

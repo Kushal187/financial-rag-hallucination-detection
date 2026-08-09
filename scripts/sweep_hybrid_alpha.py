@@ -1,9 +1,3 @@
-"""Sweep the hybrid retriever's alpha (BM25<->vector blend) on the dev split to pick the
-best setting before running the final held-out evaluation on test.
-
-Usage:
-    python scripts/sweep_hybrid_alpha.py --split dev --alphas 0.0 0.25 0.5 0.75 1.0
-"""
 
 import argparse
 import functools

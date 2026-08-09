@@ -1,13 +1,3 @@
-"""Convert raw FinQA JSON into the processed corpus + answer-key files.
-
-Usage:
-    python scripts/build_corpus.py --splits train dev test
-
-Writes to $DATA_PROCESSED_DIR (default data/processed/):
-    finqa_chunks.jsonl   the corpus (embeddable content)
-    finqa_qa.jsonl       the answer key (never embedded)
-"""
-
 import argparse
 import json
 import os
@@ -37,8 +27,6 @@ def build(splits: list[str]) -> None:
             records = json.load(f)
         print(f"{split}: {len(records)} records")
         for record in records:
-            # FinQA has ~3 questions per document; a document's chunks are identical
-            # across its questions, so emit each document's chunks exactly once.
             doc_id = record["filename"]
             if doc_id not in seen_docs:
                 seen_docs.add(doc_id)
@@ -65,7 +53,6 @@ def build(splits: list[str]) -> None:
 
 
 def _assert_evidence_present(chunks: list[dict], qa: list[dict]) -> None:
-    """Every gold evidence id must have a matching chunk in the same document."""
     by_doc: dict[str, set[str]] = {}
     for c in chunks:
         by_doc.setdefault(c["doc_id"], set()).add(c["local_id"])
@@ -84,7 +71,6 @@ def _assert_evidence_present(chunks: list[dict], qa: list[dict]) -> None:
 
 
 def _assert_chunks_unique(chunks: list[dict]) -> None:
-    """Each (doc_id, local_id) must appear exactly once (no per-question duplication)."""
     seen: set[tuple[str, str]] = set()
     dupes = 0
     for c in chunks:

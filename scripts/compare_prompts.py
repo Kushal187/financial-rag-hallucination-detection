@@ -1,16 +1,3 @@
-"""Compare RAG answer-generation prompt strategies on FinQA.
-
-For each question: retrieve (per-doc) -> assemble context -> generate an answer with
-each prompt strategy -> score with numeric-tolerant match. Prints a per-strategy
-accuracy table and writes one JSONL row per (question, strategy) to data/runs/.
-
-Mirrors scripts/eval_retrieval.py's shape (argparse, split/limit, functools.partial to
-bind retriever params, try/finally to close Weaviate).
-
-Usage:
-    python scripts/compare_prompts.py --split dev --limit 50 --retriever hybrid --k 5
-    python scripts/compare_prompts.py --split dev --limit 5 --strategies zero_shot --retriever bm25
-"""
 
 import argparse
 import functools
@@ -38,8 +25,6 @@ _RUNS_DIR = "data/runs"
 
 
 def _build_retriever(name: str, alpha: float | None, pool: int | None = None):
-    """Import only the requested retriever (lazy), so a bm25 run doesn't require
-    sentence-transformers/torch or a Weaviate connection."""
     if name == "bm25":
         from src.retrieval import bm25
 
@@ -105,7 +90,6 @@ def main() -> None:
         f"strategies={args.strategies}"
     )
 
-    # per-strategy accumulators
     stats = {s: {"correct": 0, "answered": 0, "latency_ms": 0.0, "n": 0} for s in args.strategies}
 
     try:
@@ -163,9 +147,6 @@ def main() -> None:
 
             weaviate_store.close_client()
 
-    # results table. `accuracy` counts abstentions as wrong; `attempted` is accuracy
-    # among questions the model actually answered (correct / non-abstentions) — the
-    # fairer view when a strategy abstains often.
     print(f"\nResults (n per strategy shown; wrote {out_path})")
     print(f"{'strategy':<12} {'accuracy':>9} {'attempted':>10} {'%answered':>10} {'avg_lat_ms':>11} {'n':>5}")
     for s in args.strategies:

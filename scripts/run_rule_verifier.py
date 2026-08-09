@@ -1,15 +1,3 @@
-"""Run the rule-based verifier over the labeled hallucination set.
-
-Same job as scripts/run_llm_judge.py, but using src/detection/rule_based.py instead of the
-LLM. No API calls, so this is free and finishes in a second.
-
-Writes the same {**row, "verdict": ...} shape, so scripts/score_detection.py scores the
-output without any changes — which is the whole point: the two verifiers are directly
-comparable.
-
-Usage:
-    python scripts/run_rule_verifier.py --input data/processed/detection_eval.jsonl
-"""
 
 import argparse
 import json
@@ -24,7 +12,6 @@ from src.generation.context import get_chunk_contents  # noqa: E402
 
 
 def context_for(row):
-    """Use the evidence stored on the row; fall back to looking it up by id."""
     ctx = row.get("context")
     if isinstance(ctx, list) and ctx and isinstance(ctx[0], (list, tuple)):
         return [(str(a), str(b)) for a, b in ctx]
