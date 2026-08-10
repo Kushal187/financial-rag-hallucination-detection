@@ -1,3 +1,6 @@
+"""Build the chunk corpus and answer key from the raw FinQA splits, checking that every
+gold evidence id resolves to a chunk before writing."""
+
 import argparse
 import json
 import os

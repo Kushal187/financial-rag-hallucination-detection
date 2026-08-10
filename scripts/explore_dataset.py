@@ -1,3 +1,5 @@
+"""Summarize the raw FinQA splits: field coverage, answer types, program operations and
+the gold evidence mix. Saves the per-split statistics as JSON."""
 
 import json
 import re

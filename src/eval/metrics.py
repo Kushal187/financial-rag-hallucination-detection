@@ -1,10 +1,8 @@
 """Retrieval metrics for the FinQA RAG pipeline.
 
-`evaluate_retriever` takes any `retrieve(question, doc_id, k) -> ranked local_ids`
-function, so BM25, dense, hybrid and the reranker are scored by the same harness and
-their numbers stay comparable. Retrieval happens once per question in `collect_rankings`;
-everything else is a pure aggregation over those records, which matters once a
-cross-encoder is in the mix and retrieval is the expensive step.
+`evaluate_retriever` takes any `retrieve(question, doc_id, k)` function, so every
+retriever is scored the same way. Retrieval happens once per question in
+`collect_rankings` and the rest is pure aggregation over those records.
 """
 
 import time
@@ -28,10 +26,7 @@ def collect_rankings(
 ) -> list[dict]:
     """Run `retrieve_fn` once per question at depth `k`, keeping the ranking and latency.
 
-    Any k' <= k is then a prefix slice of `ranked`, and keeping the rankings makes failure
-    analysis possible without retrieving again.
-
-    Returns `[{"id", "doc_id", "gold_evidence_ids", "ranked", "latency_ms"}, ...]`.
+    Any k' <= k is then a prefix slice, so nothing below needs to retrieve again.
     """
     records: list[dict] = []
     for row in qa_rows:
@@ -40,7 +35,6 @@ def collect_rankings(
         latency_ms = (time.perf_counter() - start) * 1000.0
         records.append(
             {
-                # optional; only used to join records back to questions
                 "id": row.get("id"),
                 "doc_id": row["doc_id"],
                 "gold_evidence_ids": list(row["gold_evidence_ids"]),
@@ -54,11 +48,8 @@ def collect_rankings(
 def summarize_rankings(
     records: list[dict], ks: Sequence[int] = (1, 5, 10)
 ) -> dict[int, dict[str, float]]:
-    """Aggregate `collect_rankings` output into recall@k and full@k for each k in `ks`.
-
-    `full` is the fraction of questions with *all* their gold evidence in the top-k, which
-    is what decides whether a FinQA question is answerable at all.
-    """
+    """Aggregate `collect_rankings` output into recall@k and full@k. `full` is the
+    fraction of questions with all their gold evidence retrieved."""
     out: dict[int, dict[str, float]] = {}
     for k in sorted(ks):
         vals = [recall_at_k(r["ranked"], r["gold_evidence_ids"], k) for r in records]
@@ -74,11 +65,8 @@ def evaluate_retriever(
     qa_rows: list[dict],
     ks: Sequence[int] = (1, 5, 10),
 ) -> dict[int, dict[str, float]]:
-    """Score a retriever over QA rows, reporting recall@k for each k in `ks`.
-
-    Retrieval runs once per question at the largest k, then each k is a prefix slice, so
-    the cost is one retrieval per question rather than one per k.
-    """
+    """Score a retriever over QA rows, reporting recall@k for each k in `ks`. Retrieval
+    runs once per question at the largest k."""
     ks = tuple(sorted(ks))
     return summarize_rankings(collect_rankings(retrieve_fn, qa_rows, max(ks)), ks)
 
@@ -92,17 +80,10 @@ def _gold_type(local_id: str) -> str:
 def per_type_recall(
     records: list[dict], ks: Sequence[int] = (1, 5, 10)
 ) -> dict[str, dict[int, float]]:
-    """Recall@k split by gold evidence type (`table` vs `text`).
-
-    Most FinQA gold evidence is table-only and linearized table rows look alike, so a
-    retriever can score well overall while being much weaker on the rows that actually
-    decide the answer.
-
-    Micro-averaged over gold items rather than questions, so a question with mixed
-    evidence counts in both buckets. Returns `{"table": {k: recall}, "text": {k: recall}}`.
-    """
+    """Recall@k split by gold evidence type, since a retriever can score well overall
+    while being much weaker on the table rows that decide the answer. Micro-averaged over
+    gold items, so a question with mixed evidence counts in both buckets."""
     ks = tuple(sorted(ks))
-    # type -> k -> [found, total]
     tallies: dict[str, dict[int, list[int]]] = {}
     for rec in records:
         for k in ks:

@@ -1,39 +1,19 @@
-"""Answer extraction + numeric-tolerant matching for FinQA generation.
+"""Answer extraction and numeric-tolerant matching for FinQA.
 
-FinQA answers are almost always numbers (sometimes yes/no). The matching has to
-tolerate a known data hazard: `gold_answer` (display string) and `gold_answer_exe`
-(executed program value) disagree on units for ~half the rows. The dominant case is
-percentages stored two ways — `gold_answer="53%"` but `gold_answer_exe=0.53232`
-(fraction). Matching against either field alone scores percentage questions near 0%.
-
-`answers_match` therefore union-matches the predicted number against several
-scale-variants of the gold, so a correct answer in *either* display convention is
-accepted. All strategies get the same (small) upward bias, so it stays fair for a
-strategy-comparison harness.
-
-Pure stdlib only — no network, no model — so this is unit-testable in isolation.
+`gold_answer` (display string) and `gold_answer_exe` (executed value) disagree on units
+for about half the rows, mostly percentages stored as fractions. `answers_match` therefore
+accepts the prediction against several scale-variants of the gold rather than one field.
 """
 
 import json
 import math
 import re
 
-__all__ = [
-    "normalize_answer",
-    "answers_match",
-    "extract_final_answer",
-    "parse_json_object",
-]
-
-# First numeric token, tolerating thousands separators and a leading sign/currency.
 _NUM_RE = re.compile(r"-?\d[\d,]*\.?\d+")
 _YESNO_RE = re.compile(r"^\s*(yes|no)\b", re.IGNORECASE)
 _FINAL_ANSWER_RE = re.compile(r"final\s+answer\s*:?\s*(.+)", re.IGNORECASE | re.DOTALL)
-# Phrases signalling the model declined to answer. The zero-shot prompt instructs the
-# canonical "I cannot determine the answer from the provided evidence."; the rest cover
-# common model variations.
 _ABSTENTION_RE = re.compile(
-    r"cannot (?:be )?determin"                                  # cannot determine / cannot be determined
+    r"cannot (?:be )?determin"                                 
     r"|unable to (?:determine|answer|provide)"
     r"|not (?:enough|sufficient) (?:info|information|evidence|data|context)"
     r"|insufficient (?:info|information|evidence|data|context)",
@@ -55,22 +35,14 @@ def _parse_number(text: object) -> float | None:
 
 
 def normalize_answer(raw: object) -> tuple[object, str]:
-    """Reduce a model answer to ``(value, kind)`` where kind ∈ {number, yes_no, abstention, text, none}.
-
-    - yes/no questions -> ``("yes"|"no", "yes_no")``
-    - numeric answers -> ``(float, "number")``
-    - abstention (model declined) -> ``(None, "abstention")``
-    - unparseable text -> ``(text, "text")``
-    - empty -> ``(None, "none")``
-    """
+    """Reduce a model answer to `(value, kind)`, where kind is one of number, yes_no,
+    abstention, text or none."""
     if raw is None:
         return (None, "none")
     text = str(raw).strip()
     if not text:
         return (None, "none")
 
-    # Abstention: the model declined. Require no commitable number, so a hedged
-    # "cannot be determined precisely; ~93.5" still yields 93.5 rather than abstention.
     if _ABSTENTION_RE.search(text) and _parse_number(text) is None:
         return (None, "abstention")
 
@@ -99,24 +71,21 @@ def answers_match(
     rel_tol: float = 1e-2,
     abs_tol: float = 1e-2,
 ) -> bool:
-    """Whether the predicted answer is correct, tolerant of FinQA's unit ambiguity.
+    """Whether the prediction is correct, tolerant of FinQA's unit ambiguity.
 
-    yes/no gold (``gold_answer_exe`` is a string) -> exact yes/no compare.
-    numeric gold -> True if the predicted number is within tolerance of *any* of the
-    gold scale-variants: ``{parse(gold_answer), gold_answer_exe, exe*100, exe/100}``
-    (the *100 // /100 pair covers the fraction-vs-percent split). Sign flips never match.
+    yes/no gold compares exactly; numeric gold matches the prediction against the gold
+    value and its x100 and /100 variants. Sign flips never match.
     """
-    # yes/no question
     if isinstance(gold_answer_exe, str):
         gold = gold_answer_exe.strip().lower()
-        if not gold:  # fall back to the answer string
+        if not gold: 
             gold = str(gold_answer).strip().lower()
         p_val, p_kind = normalize_answer(pred_raw)
         return p_kind == "yes_no" and p_val == gold
 
     p_val, p_kind = normalize_answer(pred_raw)
     if p_kind != "number" or p_val is None:
-        return False  # abstention or unparseable -> not correct
+        return False  
 
     candidates: list[float] = []
     g_str = _parse_number(gold_answer)
@@ -155,12 +124,8 @@ def parse_json_object(text: object) -> dict | None:
 
 
 def extract_final_answer(raw: object, strategy: str) -> str:
-    """Pull the answer token out of a model response, strategy-aware.
-
-    - ``structured`` -> the JSON ``answer`` field (falls back to ``FINAL ANSWER:``).
-    - ``cot`` (and any fallback) -> text after ``FINAL ANSWER:``.
-    - otherwise -> the raw response.
-    """
+    """Pull the answer token out of a model response: the JSON `answer` field for
+    `structured`, the text after `FINAL ANSWER:` for `cot`, otherwise the last number."""
     if raw is None:
         return ""
     text = str(raw).strip()
@@ -172,13 +137,8 @@ def extract_final_answer(raw: object, strategy: str) -> str:
 
     m = _FINAL_ANSWER_RE.search(text)
     if m:
-        # first line of the capture only
         return m.group(1).strip().splitlines()[0].strip()
 
-    # No explicit marker -> free-form response. The final answer is almost always the
-    # LAST number stated (a verbose model restates it in the closing sentence), not the
-    # first (which is usually an intermediate value). Prefer an explicit yes/no when the
-    # response opens with one.
     ym = _YESNO_RE.match(text)
     if ym:
         return "yes" if ym.group(1).lower() == "yes" else "no"

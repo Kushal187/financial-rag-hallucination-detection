@@ -1,8 +1,7 @@
 """Hallucination categories.
 
 The primary signal is binary (``supported``) so the two verifiers can be scored
-head-to-head; ``category`` records why an unsupported answer is unsupported. The
-descriptions below are fed to the LLM judge.
+head-to-head; ``category`` records why. These descriptions are fed to the LLM judge.
 """
 
 CATEGORIES = {

@@ -1,14 +1,8 @@
 """Generate a FinQA answer from retrieved evidence.
 
-The orchestrator ties together prompt building, the Groq client, and answer
-extraction. It is deliberately **decoupled from retrieval**: it takes a pre-assembled
-``context`` (``list[(local_id, content)]``), so Member 1's baseline pipeline and
-Member 3's reranked variant both call it identically — only the context they pass
-differs.
-
-Flow: build messages for the strategy -> call Groq (JSON mode for ``structured``) ->
-extract the answer token -> normalize. Structured-output JSON parse failures degrade
-gracefully (fall back to ``FINAL ANSWER:`` extraction) rather than crashing a run.
+Takes a pre-assembled context rather than calling a retriever itself, so any retrieval
+strategy can feed it unchanged. A failed JSON parse in `structured` mode falls back to
+`FINAL ANSWER:` extraction instead of crashing a run.
 """
 
 import time
@@ -16,9 +10,6 @@ import time
 from src.generation import client
 from src.generation.answer import extract_final_answer, normalize_answer
 from src.generation.prompts import build_messages
-
-__all__ = ["generate_answer"]
-
 
 def generate_answer(
     question: str,
@@ -28,11 +19,8 @@ def generate_answer(
     few_shot_examples: list[dict] | None = None,
     save_messages: bool = False,
 ) -> dict:
-    """Generate an answer for ``question`` grounded in ``context``.
-
-    Returns ``{raw, answer, answer_type, strategy, model, latency_ms}`` (plus
-    ``messages`` when ``save_messages=True`` for debugging).
-    """
+    """Generate an answer for `question` grounded in `context`. Returns
+    `{raw, answer, answer_type, strategy, model, latency_ms}`."""
     messages, needs_json = build_messages(strategy, question, context, few_shot_examples)
 
     start = time.perf_counter()

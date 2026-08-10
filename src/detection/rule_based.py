@@ -4,10 +4,7 @@ Checks an answer by trying to re-derive it from the numbers in the evidence: if 
 calculation over those numbers reaches the answer, it counts as supported. Looking the
 number up instead would not work, because FinQA answers are almost never printed on the
 page. The operations tried are the ones the FinQA dev programs actually use, plus percent
-change.
-
-Same verify(question, context, answer) signature as the LLM judge, so one scoring script
-grades either one unchanged.
+change. Same verify(question, context, answer) signature as the LLM judge.
 """
 
 import re
@@ -31,11 +28,8 @@ _ALL_OPERATIONS = frozenset(_OPERATION_WORDS)
 
 
 def extract_numbers(context, drop_years=True):
-    """Pull the numbers out of the evidence text.
-
-    `drop_years` removes whole numbers between 1900 and 2030. Filing pages are full of
-    years and they only give `derive` extra operands to hit the answer with by accident.
-    """
+    """Pull the numbers out of the evidence. `drop_years` discards 1900-2030, which are
+    almost always dates and just give `derive` extra operands to hit the answer with."""
     numbers = []
     for _chunk_id, text in context:
         for match in _NUM.findall(str(text)):
@@ -73,11 +67,8 @@ def _same(a, b, tol):
 def derive(target, numbers, tol=DEFAULT_TOL, operations=None):
     """Try to build `target` out of `numbers`. Returns the derivation, or None.
 
-    `operations` limits which calculations to try; pass `operations_for(question)`.
-
-    One operation on at most two numbers. Multi-step FinQA programs are out of reach, but
-    widening the search makes things worse rather than better: the verifier already
-    accepts too much, so more reachable values means more wrong answers slipping through.
+    One operation on at most two numbers, limited to `operations`. Multi-step programs are
+    out of reach, but widening the search lets through more wrong answers, not fewer.
     """
     if target is None:
         return None
@@ -139,7 +130,6 @@ def verify(question, context, answer, tol=DEFAULT_TOL):
 
     target = _parse(answer)
     if target is None:
-        # yes/no and other non-numeric answers can't be checked this way.
         return verdict(True, "supported", "Answer is not a number, so we cannot check it.")
 
     found = derive(target, numbers, tol, operations_for(question))

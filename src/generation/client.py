@@ -1,11 +1,7 @@
-"""Wrapper around the Groq chat completions API.
+"""Wrapper around the Groq chat completions API, with Bedrock as an alternate backend.
 
-- lazy singleton client + ``GROQ_MODEL`` env (unchanged from the original)
-- ``chat(...)`` now accepts ``response_format`` for JSON mode
-- ``chat_json(...)`` forces JSON-object output (Groq requires the literal token
-  "json" to appear in the prompt for JSON mode — handled here)
-- ``_retry`` adds exponential backoff on rate limits and transient 5xx/transport
-  errors, so a multi-question run doesn't die on the first 429
+`chat_json` forces JSON-object output, and `_retry` backs off on rate limits and transient
+5xx errors so a long run doesn't die on the first 429.
 """
 
 import os
@@ -17,8 +13,6 @@ from groq import Groq
 
 load_dotenv()
 
-# Which backend to call. Both run llama-3.3-70b, so results stay comparable;
-# bedrock has no daily token cap, groq is free but limited to 100K tokens/day.
 _PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
 
 if _PROVIDER == "bedrock":
@@ -28,7 +22,6 @@ else:
 
 _client: Groq | None = None
 
-# Retryable exception classes (resolved defensively in case the SDK renames any).
 _RateLimitError = getattr(groq, "RateLimitError", ())
 _APIStatusError = getattr(groq, "APIStatusError", ())
 _APIConnectionError = getattr(groq, "APIConnectionError", ())

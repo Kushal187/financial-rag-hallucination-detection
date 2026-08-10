@@ -1,9 +1,7 @@
 """LLM-as-a-judge hallucination verifier.
 
 Decides whether an answer is supported by the retrieved evidence, not whether it matches
-the gold label: an answer can follow from the evidence and still be numerically wrong,
-which is a generation error rather than a hallucination. The judge never sees the gold
-answer, since that would make the check circular.
+the gold label. The judge never sees the gold answer, which would make the check circular.
 """
 
 import time
@@ -105,7 +103,6 @@ def parse_evidence_verdict(raw: object) -> dict:
     return {
         "supported": sufficient,
         "partial": False,
-        # Answering without the necessary figures is the out_of_context case.
         "category": SUPPORTED_CATEGORY if sufficient else "out_of_context",
         "computed_value": None,
         "confidence": confidence,
@@ -152,7 +149,6 @@ def parse_verdict(raw: object) -> dict:
         "supported": supported,
         "partial": bool(obj.get("partial", False)),
         "category": str(category),
-        # Kept so we can check the judge actually compared its own result to the answer.
         "computed_value": obj.get("computed_value"),
         "confidence": confidence,
         "reasoning": str(obj.get("reasoning", "")),

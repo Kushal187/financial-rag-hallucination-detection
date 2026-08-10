@@ -1,19 +1,9 @@
 """Cross-encoder reranking over a candidate pool from a first-stage retriever.
 
-BM25 and the dense bi-encoder both score a question and a chunk *independently* — the
-chunk's representation is fixed before the question is seen. That is what makes them
-cheap enough to run over a corpus, and also what makes them weak on FinQA, where the
-distinguishing signal is usually an interaction ("which of these near-identical table
-rows is the *2009* one?"). A cross-encoder reads (question, chunk) jointly in one
-forward pass and models exactly that, but is far too slow to score a whole corpus.
-
-The standard fix, used here: over-fetch `pool` candidates with the cheap hybrid
-retriever, then re-score only those with the cross-encoder and keep the top `k`.
-Recall@pool of the first stage is therefore a hard ceiling on Recall@k after reranking
-— `pool` buys recall headroom at the cost of latency (swept in scripts/eval_rerank.py).
-
-Same shared retriever contract as src.retrieval.dense: retrieve(question, doc_id, k), so
-it's a drop-in swap for eval.metrics.evaluate_retriever and the generation stage.
+A cross-encoder reads (question, chunk) jointly, which is what BM25 and the bi-encoder
+cannot do, but it is too slow to score a whole corpus. So a cheap retriever supplies
+`pool` candidates and only those are re-scored. Recall@pool of the first stage is a hard
+ceiling on recall after reranking.
 """
 
 import os
@@ -31,7 +21,7 @@ _model: CrossEncoder | None = None
 
 
 def get_model() -> CrossEncoder:
-    """Lazily load the cross-encoder once, shared across calls (mirrors embed.get_model)."""
+    """Load the cross-encoder once, shared across calls."""
     global _model
     if _model is None:
         _model = CrossEncoder(DEFAULT_MODEL)
@@ -41,12 +31,8 @@ def get_model() -> CrossEncoder:
 def _candidates(question: str, doc_id: str, n: int, base: str) -> list[tuple[str, str]]:
     """Fetch `n` first-stage candidates as ranked `(local_id, content)` pairs.
 
-    Both branches read `content` straight out of what the first stage already holds —
-    Weaviate returns it on the hit, BM25 has it in its cached chunk dicts — so reranking
-    needs neither a second copy of the 86k-row corpus nor an import from src.generation
-    (which would point the retrieval layer at the generation layer).
-
-    Imported inside the branch so `base="bm25"` runs with no Weaviate credentials.
+    Both branches reuse content the first stage already holds, so no second copy of the
+    corpus is needed. Imports are inside the branch so `base="bm25"` needs no Weaviate.
     """
     if base == "hybrid":
         from src.retrieval.embed import embed_texts
@@ -61,7 +47,6 @@ def _candidates(question: str, doc_id: str, n: int, base: str) -> list[tuple[str
         from src.retrieval import bm25
 
         by_id = {c["local_id"]: c["content"] for c in bm25.chunks_for_doc(doc_id)}
-        # bm25.retrieve (not a fresh BM25Retriever) so the per-doc index cache is reused.
         return [(lid, by_id[lid]) for lid in bm25.retrieve(question, doc_id, n) if lid in by_id]
 
     raise ValueError(f"unknown rerank base {base!r} (expected 'hybrid' or 'bm25')")
@@ -74,14 +59,10 @@ def rank(
     pool: int = DEFAULT_POOL,
     base: str = DEFAULT_BASE,
 ) -> list[tuple[str, float]]:
-    """Return the top-k `(local_id, cross-encoder score)` pairs, best first.
+    """Return the top-k `(local_id, score)` pairs, best first.
 
-    The whole pool is scored in a single batched `predict` call — one forward pass per
-    question, not one per candidate. Ties keep first-stage order (`sorted` is stable).
-
-    `pool` is floored at `k`: asking for more results than candidates is a caller bug,
-    but silently returning fewer is kinder than raising in the middle of an 883-question
-    evaluation run.
+    The pool is scored in one batched call. Ties keep first-stage order, and `pool` is
+    floored at `k` rather than raising partway through a run.
     """
     pool = max(pool, k)
     candidates = _candidates(question, doc_id, pool, base)
@@ -104,6 +85,5 @@ def retrieve(
     pool: int = DEFAULT_POOL,
     base: str = DEFAULT_BASE,
 ) -> list[str]:
-    """Return the top-k chunk `local_id`s for `question`, scoped to its filing page,
-    reranked by a cross-encoder over a larger first-stage pool."""
+    """Return the top-k chunk local_ids for `question`, reranked over a larger pool."""
     return [local_id for local_id, _ in rank(question, doc_id, k, pool, base)]

@@ -1,3 +1,4 @@
+"""Embed the chunk corpus and ingest it into the Weaviate collection."""
 
 import argparse
 import os

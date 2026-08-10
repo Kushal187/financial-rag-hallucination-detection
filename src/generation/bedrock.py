@@ -1,16 +1,8 @@
-"""Call Llama on AWS Bedrock instead of Groq — same model, no daily token limit.
+"""Call Llama on AWS Bedrock instead of Groq: same model, no daily token limit.
 
-Groq's free tier gives us 100K tokens/day, which isn't enough to run all four
-prompt strategies over a few hundred questions. Bedrock hosts the exact same
-model (llama-3.3-70b), so switching to it doesn't invalidate any result we've
-already measured.
-
-Bedrock's Converse API wants a slightly different message shape than Groq:
-  - system messages go in their own `system` argument, not in `messages`
-  - each message's content is a list of blocks, like [{"text": "..."}]
-  - roles must alternate user/assistant, so we merge any consecutive ones
-
-Switch providers with LLM_PROVIDER=bedrock in .env (see src/generation/client.py).
+Bedrock's Converse API wants a different message shape, so system messages move to their
+own argument, content becomes a list of blocks, and consecutive same-role turns are
+merged. Set LLM_PROVIDER=bedrock to use it.
 """
 
 import os
@@ -51,13 +43,11 @@ def to_converse(messages):
 
         role = "assistant" if message.get("role") == "assistant" else "user"
         if turns and turns[-1]["role"] == role:
-            # Bedrock rejects two messages in a row with the same role.
             turns[-1]["content"][0]["text"] += "\n\n" + text
         else:
             turns.append({"role": role, "content": [{"text": text}]})
 
     if turns and turns[0]["role"] == "assistant":
-        # The conversation has to start with the user.
         turns.insert(0, {"role": "user", "content": [{"text": "Continue."}]})
     return system, turns
 
@@ -66,8 +56,6 @@ def chat(messages, temperature=0.0, max_tokens=512, force_json=False):
     """Send the messages to Bedrock and return the reply text."""
     system, turns = to_converse(messages)
     if force_json:
-        # Llama on Bedrock has no response_format option, so we ask in the prompt.
-        # answer.parse_json_object() strips any code fences that come back.
         system.append({"text": "Reply with a single valid json object and nothing else."})
 
     kwargs = {

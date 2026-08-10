@@ -1,3 +1,4 @@
+"""Evaluate one retriever on one split, reporting recall@k and full@k."""
 
 import argparse
 import functools

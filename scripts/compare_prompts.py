@@ -1,3 +1,5 @@
+"""Run the prompting strategies over a split and report accuracy, abstention rate and
+latency for each."""
 
 import argparse
 import functools

@@ -1,3 +1,4 @@
+"""Run BM25 retrieval over a split and save the ranked predictions for each question."""
 
 import argparse
 import json

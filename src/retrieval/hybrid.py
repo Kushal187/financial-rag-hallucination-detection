@@ -1,9 +1,6 @@
-"""Hybrid retriever: BM25 keyword search + dense vector search, fused by Weaviate's
-native hybrid query (relative score fusion). `alpha=0` is pure BM25, `alpha=1` is pure
-vector; tune on the dev split (see scripts/sweep_hybrid_alpha.py) and set HYBRID_ALPHA.
+"""Hybrid retriever: BM25 keyword search and dense vector search, fused by Weaviate.
 
-Same shared retriever contract as src.retrieval.dense: retrieve(question, doc_id, k), so
-it's a drop-in swap for eval.metrics.evaluate_retriever and the generation stage.
+`alpha=0` is pure BM25, `alpha=1` is pure vector; set HYBRID_ALPHA to override.
 """
 
 import os
@@ -11,8 +8,7 @@ import os
 from src.retrieval.embed import embed_texts
 from src.retrieval.weaviate_store import hybrid_search
 
-# 0.6 chosen via scripts/sweep_hybrid_alpha.py on the dev split: it beat both pure BM25
-# (alpha=0) and pure dense (alpha=1) at every k (see docs/data_schema.md).
+
 DEFAULT_ALPHA = float(os.getenv("HYBRID_ALPHA", "0.6"))
 
 

@@ -1,7 +1,7 @@
-"""Weaviate Cloud vector store for FinQA chunks (v4 client, bring-your-own vectors).
+"""Weaviate Cloud vector store for FinQA chunks (bring-your-own vectors).
 
-Retrieval is scoped per-document: one global collection, filtered by `doc_id` at query
-time, mirroring FinQA where the gold evidence always lives on a single filing page.
+One global collection, filtered by `doc_id` at query time, since FinQA gold evidence
+always lives on a single filing page.
 """
 
 import os
@@ -50,8 +50,6 @@ def create_collection(name: str = _COLLECTION, recreate: bool = False):
     if not client.collections.exists(name):
         client.collections.create(
             name=name,
-            # Bring-your-own vectors (sentence-transformers). This Weaviate Cloud
-            # cluster only permits the "hfresh" vector index type, not hnsw.
             vector_config=Configure.Vectors.self_provided(
                 vector_index_config=Configure.VectorIndex.hfresh(
                     distance_metric=VectorDistances.COSINE
@@ -118,9 +116,7 @@ def hybrid_search(
     alpha: float = 0.5,
     name: str = _COLLECTION,
 ) -> list[dict]:
-    """Return the top-k chunks within a single document, ranked by Weaviate's native
-    hybrid fusion of BM25 keyword search (over `content`) and vector search. `alpha=0` is
-    pure BM25, `alpha=1` is pure vector search."""
+    """Return the top-k chunks in one document by hybrid BM25 + vector fusion."""
     collection = get_client().collections.get(name)
     result = collection.query.hybrid(
         query=query,

@@ -1,4 +1,5 @@
-
+"""Run the LLM-as-a-judge verifier over generated answers and report the verdict
+distribution, plus precision/recall/F1 when the input carries gold labels."""
 
 import argparse
 import json

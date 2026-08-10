@@ -1,3 +1,6 @@
+"""Label generated answers as supported or hallucinated to produce the detection
+evaluation set."""
+
 import argparse
 import json
 import os

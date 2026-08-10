@@ -1,24 +1,16 @@
 #!/usr/bin/env python
-"""One run of the whole system, end to end — retrieval, generation, detection.
+"""One run of the whole system end to end: retrieval, generation, detection.
 
-    python demo.py                 # live: Weaviate + cross-encoder + LLM
-    python demo.py --offline       # no network at all; replays data/runs/*.jsonl
-    python demo.py --retriever bm25    # skip Weaviate, keep the LLM live
+    python demo.py                   # live: Weaviate + cross-encoder + LLM
+    python demo.py --offline         # no network; replays the recorded runs
+    python demo.py --retriever bm25  # skip Weaviate, keep the LLM live
 
-Three parts, on real FinQA questions:
+Three parts, on real FinQA questions: the pipeline working, the pipeline hallucinating and
+being caught, then precision/recall/F1 over the 560-row labeled set. Every number is
+computed at run time, not copied out of the report.
 
-  1. The RAG pipeline working. Retrieve the evidence, answer the question, and have both
-     verifiers confirm the answer follows from the evidence. Nothing is flagged.
-  2. The RAG pipeline hallucinating. Retrieval misses the row the question needs, the
-     model answers anyway, and the verifiers catch it.
-  3. What that is worth at scale — precision/recall/F1 over the 560-row labeled set.
-
-Everything the demo prints about part 3 is computed here from files in data/, not
-copied out of the report.
-
-Degrading gracefully is deliberate: whoever runs this may have no Weaviate cluster and
-no API key. Each stage falls back to the recorded run it would have reproduced, and says
-so on the line where it does it. `--offline` skips straight to that.
+Each stage falls back to a recorded run when it can't reach the network, and says so on
+the line where it does, so this still works with no cluster and no API key.
 """
 
 import argparse
@@ -46,7 +38,7 @@ from src.generation import client  # noqa: E402
 GOOD_QUESTION = "V/2008/page_17.pdf-1"
 
 # The gold row (table_8) is not in the top 5 for any retriever we have. The model answers
-# anyway — with a year, which is the failure mode the report opens with.
+# anyway, with a year, which is the failure mode the report opens with.
 HALLUCINATED_QUESTION = "ADBE/2018/page_86.pdf-1"
 
 # Recorded outputs, used for part 3 and as the fallback when a live stage can't run.
@@ -129,11 +121,8 @@ def _read_jsonl(path):
 
 
 def recorded(kind, question_id, strategy):
-    """The row this (question, strategy) produced in a previous run, or None.
-
-    Keyed by strategy as well as id because one question appears once per prompt
-    strategy in every run file — with the same evidence but a different answer.
-    """
+    """The row this (question, strategy) produced in a previous run, or None. Keyed by
+    strategy too, since a question appears once per strategy in every run file."""
     if kind not in _cache:
         path = _RUN_FILES[kind]
         rows = _read_jsonl(path) if os.path.exists(path) else []
@@ -143,12 +132,10 @@ def recorded(kind, question_id, strategy):
 
 # ── stages ───────────────────────────────────────────────────────────────────
 def build_retriever(name):
-    """Return ``(retrieve_fn, label, description)``, falling back to BM25.
+    """Return `(retrieve_fn, label, description)`, falling back to BM25.
 
-    Only the requested retriever is imported: BM25 needs nothing but the local corpus,
-    while `hybrid`/`rerank` want Weaviate credentials and (for rerank) a cross-encoder
-    download. A grader with neither should still get a working demo, so a failure here
-    degrades instead of raising.
+    Only the requested retriever is imported, and a failure degrades rather than raising,
+    so this still runs without Weaviate credentials or a cross-encoder download.
     """
     if name == "bm25":
         from src.retrieval import bm25
@@ -263,7 +250,7 @@ def generate_stage(qa_row, context, strategy, offline, retrieval_was_live=False)
     if source == "replayed" and retrieval_was_live:
         # The recorded answer was written against the recorded (rerank) ranking. If this
         # run retrieved live with something else, the evidence on screen is not quite the
-        # evidence that produced this answer — say so rather than let it pass unnoticed.
+        # evidence that produced this answer, so say so rather than let it pass.
         note("Careful reading it as one run: retrieval above is live, but the answer "
              "below was generated in an earlier run against that run's ranking.", "yellow")
 
@@ -281,11 +268,8 @@ def generate_stage(qa_row, context, strategy, offline, retrieval_was_live=False)
 
 def detect_stage(question, context, answer, question_id, strategy, offline,
                  judge_model=None, evidence_mode=True):
-    """Run both verifiers on the answer and print what each concluded.
-
-    Neither is shown the gold answer — that is the whole point. Accuracy needs an answer
-    key; this check does not, so it is the one you can still run in production.
-    """
+    """Run both verifiers on the answer and print what each concluded. Neither is shown
+    the gold answer, which is what makes this runnable without an answer key."""
     step("STEP 3 · DETECTION — does that answer follow from those chunks?")
     note("Neither verifier is given the gold answer. They see the question, the "
          "evidence, and the candidate answer — exactly what is available at deployment "
@@ -323,12 +307,9 @@ def detect_stage(question, context, answer, question_id, strategy, offline,
 def judging_as(model_id):
     """Point the LLM client at a different model for the duration of the block.
 
-    The largest single result in this project is that the judge should not be the model
-    that wrote the answers — same rows, same prompt, F1 0.41 -> 0.54 on the swap alone.
-    The experiment scripts get that by running the judge as a separate process with a
-    different env; a one-process demo cannot, so the model is swapped in place instead.
-    Both `client.chat` and `bedrock.chat` read their module-level model at call time,
-    which is what makes this safe.
+    The judge should not be the model that wrote the answers, and a one-process demo can't
+    get that from the environment, so the model is swapped in place. Safe because both
+    client backends read their module-level model at call time.
     """
     if not model_id:
         yield
@@ -542,7 +523,7 @@ def _score_table(entries, positive, all_rows):
               f"   {c(comment, 'dim')}")
 
     # Flagging every answer gets perfect recall for free, so it is the score any real
-    # detector has to beat — not 0.
+    # detector has to beat, not 0.
     p = sum(1 for r in all_rows if positive(r)) / len(all_rows)
     print(c(f"     {'baseline: flag everything':<30}{p:>7.2f}{1.0:>7.2f}"
             f"{2 * p / (p + 1):>7.2f}{p:>7.2f}   the bar to clear", "dim"))

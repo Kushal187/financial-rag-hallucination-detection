@@ -1,12 +1,8 @@
 """Convert raw FinQA records into corpus chunks and answer-key rows.
 
-Pure transform logic (no I/O). The local_id scheme here must stay identical to
-FinQA's `gold_inds` keys so retrieval can be graded against them:
-  - text_N  = (pre_text + post_text)[N]
-  - table_N = table[N], linearized against table[0] as the column header. Every row is
-    emitted, including table_0 (the header linearized against itself), because FinQA's
-    gold_inds can cite table_0.
-See docs/data_schema.md for the full schema.
+The local_id scheme must stay identical to FinQA's gold_inds keys so retrieval can be
+graded against them: text_N is the Nth sentence, table_N the Nth table row linearized
+against the header. Every row is emitted, including table_0, since gold_inds can cite it.
 """
 
 

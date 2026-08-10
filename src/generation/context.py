@@ -1,24 +1,14 @@
-"""Resolve retrieved chunk `local_id`s back to their text and format them for a prompt.
+"""Resolve retrieved chunk local_ids back to their text and format them for a prompt.
 
-Retrieval returns only ``local_id`` strings (the shared contract in
-``src.retrieval.*``); the generator needs the actual ``content`` to build a prompt,
-and the judge needs the ``local_id``s to cite evidence. This module bridges the two
-by building a doc-scoped ``{local_id: content}`` index **once** (the corpus is ~86k
-rows — never re-read it per question; ``src.retrieval.bm25`` caches the same way via
-``load_chunks_by_doc``).
-
-The context seam used across generation + detection is ``list[tuple[local_id, content]]``
-— bare strings lose the id the judge cites; the full chunk dict couples generation to
-storage. Tuples are the minimal contract.
+Retrieval returns only local_ids, but the generator needs the content and the judge needs
+the ids to cite. The index is built once and reused, since the corpus is ~86k rows. The
+shared context type is `list[tuple[local_id, content]]`.
 """
 
 from src.data.load_data import load_chunks
 
-__all__ = ["get_chunk_contents", "get_chunks_by_doc", "format_context", "NO_EVIDENCE"]
-
 NO_EVIDENCE = "[no evidence retrieved]"
 
-# {doc_id: {local_id: content}} — built once, reused across all calls.
 _INDEX: dict[str, dict[str, str]] | None = None
 
 
@@ -39,11 +29,8 @@ def get_chunks_by_doc(doc_id: str) -> dict[str, str]:
 
 
 def get_chunk_contents(doc_id: str, local_ids: list[str]) -> list[tuple[str, str]]:
-    """Map ``local_ids`` -> ``[(local_id, content), ...]`` in input order.
-
-    Unknown ids are skipped (a retriever could in principle return an id that doesn't
-    resolve; better to drop it silently than crash a run).
-    """
+    """Map `local_ids` to `[(local_id, content), ...]` in input order, skipping any id
+    that doesn't resolve."""
     by_id = _get_index().get(doc_id, {})
     out: list[tuple[str, str]] = []
     for lid in local_ids:
@@ -54,11 +41,8 @@ def get_chunk_contents(doc_id: str, local_ids: list[str]) -> list[tuple[str, str
 
 
 def format_context(chunks: list[tuple[str, str]], with_citations: bool = True) -> str:
-    """Render retrieved chunks into a prompt-ready evidence block.
-
-    Numbered so the judge can cite ``[1]``/``[2]`` and so the generator sees ordering.
-    An empty list yields ``NO_EVIDENCE`` so downstream code can detect abstention.
-    """
+    """Render retrieved chunks as a numbered evidence block so the judge can cite them.
+    An empty list yields NO_EVIDENCE."""
     if not chunks:
         return NO_EVIDENCE
     lines: list[str] = []

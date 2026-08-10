@@ -1,3 +1,5 @@
+"""Compare the cross-encoder reranker against the first-stage retrievers, with recall
+split by evidence type and a win/loss analysis of the questions reranking changed."""
 
 import argparse
 import functools

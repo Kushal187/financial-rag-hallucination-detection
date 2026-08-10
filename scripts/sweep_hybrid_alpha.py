@@ -1,3 +1,4 @@
+"""Sweep the hybrid retriever's alpha to find the best BM25/vector mix."""
 
 import argparse
 import functools

@@ -1,9 +1,4 @@
-"""Load the standardized processed dataset.
-
-Every downstream stage should load data through here so the schema lives in exactly
-one place. See docs/data_schema.md for the record formats. The processed files are
-produced by scripts/build_corpus.py.
-"""
+"""Load the processed dataset, so every stage reads the schema from one place."""
 
 import json
 import os

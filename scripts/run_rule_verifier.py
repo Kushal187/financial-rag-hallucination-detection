@@ -1,3 +1,4 @@
+"""Run the rule-based verifier over generated answers. No API calls, so this is free."""
 
 import argparse
 import json

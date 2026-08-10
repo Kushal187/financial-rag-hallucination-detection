@@ -1,16 +1,8 @@
-"""Prompt strategies for FinQA answer generation.
+"""Prompt strategies for FinQA answer generation: zero_shot, few_shot, cot, structured.
 
-Four strategies, all sharing one retrieval-agnostic seam:
-``build(question, context: list[(local_id, content)], few_shot_examples) -> (messages, needs_json)``.
-
-- ``zero_shot``  baseline: evidence + question, concise grounded answer.
-- ``few_shot``   prepends N stratified train demonstrations (numeric / percent / yes-no).
-- ``cot``        chain-of-thought, ends with ``FINAL ANSWER: <x>``.
-- ``structured`` JSON-mode output ``{"reasoning","answer","answer_type"}``.
-
-Few-shot examples come from the **train** split only (never dev/test) and are sampled
-stratified across answer shape so the model actually sees percent and yes/no formats,
-not three numeric rows. Sampling is seeded for reproducibility.
+All four share one signature, `(question, context, few_shot_examples) -> (messages,
+needs_json)`. Few-shot examples come from the train split only, sampled stratified across
+answer shape so the model sees percent and yes/no formats rather than three numeric rows.
 """
 
 import random
@@ -18,11 +10,7 @@ import random
 from src.data.load_data import load_qa
 from src.generation.context import format_context, get_chunk_contents
 
-__all__ = ["STRATEGIES", "build_messages", "load_few_shot_examples"]
 
-# Shared grounding contract. The abstention clause matters: it lets the generator
-# decline instead of fabricating when evidence is missing (a retrieval miss should
-# become an abstention, not a hallucination).
 _SYSTEM_BASE = (
     "You are a financial question-answering assistant. Answer the user's question "
     "using ONLY the evidence provided below. Do not use outside knowledge. "
@@ -54,9 +42,6 @@ def _question_block(question: str) -> str:
     return f"Question: {question}\nAnswer:"
 
 
-# --------------------------------------------------------------------------- #
-# Strategy builders
-# --------------------------------------------------------------------------- #
 def build_zero_shot(question, context, few_shot_examples=None):
     messages = [
         {"role": "system", "content": _SYSTEM_BASE},
@@ -112,9 +97,6 @@ def build_messages(strategy, question, context, few_shot_examples=None):
     return builder(question, context, few_shot_examples=few_shot_examples)
 
 
-# --------------------------------------------------------------------------- #
-# Few-shot demonstration pool (train split only)
-# --------------------------------------------------------------------------- #
 def _classify(qa_row: dict) -> str:
     exe = qa_row["gold_answer_exe"]
     if isinstance(exe, str):
@@ -137,11 +119,8 @@ def _example_from_qa(qa_row: dict) -> dict:
 
 
 def load_few_shot_examples(n: int = 3, seed: int = 42) -> list[dict]:
-    """Return n compact, stratified train demonstrations (yes-no, percent, then numeric).
-
-    Stratified so the model sees percent and yes/no output formats rather than three
-    numeric rows (numeric dominates the corpus). Seeded for reproducibility.
-    """
+    """Return n stratified train demonstrations (yes-no, percent, then numeric), seeded
+    so the sample is reproducible."""
     rng = random.Random(seed)
     buckets: dict[str, list[dict]] = {"yes_no": [], "percent": [], "numeric": []}
     for q in load_qa():
@@ -150,8 +129,7 @@ def load_few_shot_examples(n: int = 3, seed: int = 42) -> list[dict]:
         buckets[_classify(q)].append(q)
 
     chosen: list[dict] = []
-    # Round-robin across shape buckets so the model sees one of each format before any
-    # repeats — otherwise the dominant numeric bucket would crowd percent/yes-no out.
+    
     while len(chosen) < n:
         progressed = False
         for key in ("yes_no", "percent", "numeric"):
@@ -162,6 +140,6 @@ def load_few_shot_examples(n: int = 3, seed: int = 42) -> list[dict]:
                 chosen.append(buckets[key].pop(idx))
                 progressed = True
         if not progressed:
-            break  # every bucket exhausted
+            break  
 
     return [_example_from_qa(q) for q in chosen[:n]]

@@ -1,3 +1,5 @@
+"""Score a verifier's output against the gold labels: precision, recall, F1, and the
+individual disagreements."""
 
 import argparse
 import json
