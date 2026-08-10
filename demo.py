@@ -1,16 +1,11 @@
 #!/usr/bin/env python
 """One run of the whole system end to end: retrieval, generation, detection.
 
-    python demo.py                   # live: Weaviate + cross-encoder + LLM
-    python demo.py --offline         # no network; replays the recorded runs
-    python demo.py --retriever bm25  # skip Weaviate, keep the LLM live
+    python demo.py           # replays the recorded runs, no setup, no network
+    python demo.py --live    # actually calls the retriever and the LLM
 
-Three parts, on real FinQA questions: the pipeline working, the pipeline hallucinating and
-being caught, then precision/recall/F1 over the 560-row labeled set. Every number is
-computed at run time, not copied out of the report.
-
-Each stage falls back to a recorded run when it can't reach the network, and says so on
-the line where it does, so this still works with no cluster and no API key.
+Three parts, on real FinQA questions: the pipeline working, the same pipeline
+hallucinating and being caught, then precision/recall/F1 over 560 labeled answers.
 """
 
 import argparse
@@ -22,56 +17,38 @@ import textwrap
 import time
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("HF_HUB_VERBOSITY", "error")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.data.load_data import load_qa  # noqa: E402
 from src.detection import llm_judge, rule_based  # noqa: E402
 from src.generation import answers_match, generate_answer, get_chunk_contents  # noqa: E402
-from src.generation import client  # noqa: E402
 
-# ── which questions the demo runs on ─────────────────────────────────────────
-# Both are real FinQA dev questions our pipeline has already been run on, so a live run
-# can be checked against a recorded one. Neither is special-cased anywhere in src/.
-
-# Retrieval finds the American Express table row; the answer (637 / 5.0) is a division
-# the rule-based verifier can re-derive, so part 1 shows both verifiers agreeing.
 GOOD_QUESTION = "V/2008/page_17.pdf-1"
-
-# The gold row (table_8) is not in the top 5 for any retriever we have. The model answers
-# anyway, with a year, which is the failure mode the report opens with.
 HALLUCINATED_QUESTION = "ADBE/2018/page_86.pdf-1"
 
-# Recorded outputs, used for part 3 and as the fallback when a live stage can't run.
-_RUN_FILES = {
-    "generation": "data/runs/prompts_dev_rerank.jsonl",
-    "rule_based": "data/runs/verdicts_rule_based.jsonl",
-    # The judge configuration the report recommends: a *different* model from the one
-    # that wrote the answers (llama), which is where most of its F1 comes from.
-    "judge_grounding": "data/runs/judge_v4_claude_haiku.jsonl",
-    "judge_evidence": "data/runs/judge_v5_evidence_mode.jsonl",
-    # Same rows, judged by the model that also generated the answers.
-    "judge_selfgraded": "data/runs/judge_v3_with_fabrications.jsonl",
-}
-_LABELED_SET = "data/processed/detection_eval.jsonl"
-
+K = 5
+STRATEGY = "zero_shot"
 WIDTH = 84
 
-
-# ── printing ─────────────────────────────────────────────────────────────────
-_ANSI = {
-    "bold": "\033[1m",
-    "dim": "\033[2m",
-    "red": "\033[31m",
-    "green": "\033[32m",
-    "yellow": "\033[33m",
-    "blue": "\033[34m",
-    "cyan": "\033[36m",
+RUN_FILES = {
+    "generation": "data/runs/prompts_dev_rerank.jsonl",
+    "judge_grounding": "data/runs/judge_v4_claude_haiku.jsonl",
+    "judge_evidence": "data/runs/judge_v5_evidence_mode.jsonl",
+    "judge_selfgraded": "data/runs/judge_v3_with_fabrications.jsonl",
 }
+LABELED_SET = "data/processed/detection_eval.jsonl"
+
+
+_ANSI = {"bold": "\033[1m", "dim": "\033[2m", "red": "\033[31m",
+         "green": "\033[32m", "yellow": "\033[33m", "cyan": "\033[36m"}
 _USE_COLOR = True
 
 
 def c(text, *styles):
-    styles = [s for s in styles if s]  # tolerate c(x, None) from a conditional style
+    styles = [s for s in styles if s]
     if not _USE_COLOR or not styles:
         return str(text)
     return "".join(_ANSI[s] for s in styles) + str(text) + "\033[0m"
@@ -86,24 +63,21 @@ def title(text):
 
 def step(text):
     print()
-    print(c(f"  {text}", "bold") + c(" " + "-" * max(0, WIDTH - len(text) - 5), "dim"))
+    print(c(f"  {text}", "bold"))
 
 
-def field(label, value, style=None, width=14):
-    """One `label   value` line, wrapped and hanging-indented under the value column."""
-    pad = " " * (5 + width)
+def field(label, value, style=None):
+    pad = " " * 19
     body = textwrap.wrap(str(value), width=WIDTH - len(pad)) or [""]
-    print(f"     {c(label.ljust(width), 'dim')}{c(body[0], style)}")
+    print(f"     {c(label.ljust(14), 'dim')}{c(body[0], style)}")
     for line in body[1:]:
         print(pad + c(line, style))
 
 
 def note(text, style="dim"):
-    """An indented paragraph. Newlines are kept, so a shell command stays on its own line."""
     print()
-    for paragraph in str(text).split("\n"):
-        for line in textwrap.wrap(paragraph, width=WIDTH - 6) or [""]:
-            print(c("     " + line, style))
+    for line in textwrap.wrap(str(text), width=WIDTH - 6) or [""]:
+        print(c("     " + line, style))
 
 
 def clip(text, width):
@@ -111,103 +85,39 @@ def clip(text, width):
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-# ── recorded runs ────────────────────────────────────────────────────────────
 _cache = {}
 
 
-def _read_jsonl(path):
+def read_jsonl(path):
     with open(path, encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def recorded(kind, question_id, strategy):
-    """The row this (question, strategy) produced in a previous run, or None. Keyed by
-    strategy too, since a question appears once per strategy in every run file."""
+def recorded(kind, question_id):
+    """The row this question produced in a previous run, or None."""
     if kind not in _cache:
-        path = _RUN_FILES[kind]
-        rows = _read_jsonl(path) if os.path.exists(path) else []
+        path = RUN_FILES[kind]
+        rows = read_jsonl(path) if os.path.exists(path) else []
         _cache[kind] = {(r["id"], r.get("strategy")): r for r in rows}
-    return _cache[kind].get((question_id, strategy))
+    return _cache[kind].get((question_id, STRATEGY))
 
 
-# ── stages ───────────────────────────────────────────────────────────────────
-def build_retriever(name):
-    """Return `(retrieve_fn, label, description)`, falling back to BM25.
+def retrieve_stage(qa, retrieve_fn):
+    """Retrieve the evidence, print the ranking, and say whether the gold row is in it."""
+    step("STEP 1 · RETRIEVAL   which chunks of this page are relevant?")
 
-    Only the requested retriever is imported, and a failure degrades rather than raising,
-    so this still runs without Weaviate credentials or a cross-encoder download.
-    """
-    if name == "bm25":
-        from src.retrieval import bm25
-
-        return bm25.retrieve, "bm25", "BM25 over the chunks of this filing page"
-
-    try:
-        if name == "rerank":
-            from src.retrieval import rerank
-
-            # Load the cross-encoder now rather than inside the first timed retrieval,
-            # where a ~6s one-off model load would be reported as query latency.
-            print(c(f"\n     loading cross-encoder {rerank.DEFAULT_MODEL} ...", "dim"))
-            rerank.get_model()
-            return (
-                rerank.retrieve,
-                f"rerank (base={rerank.DEFAULT_BASE}, pool={rerank.DEFAULT_POOL})",
-                f"hybrid BM25+vector -> top {rerank.DEFAULT_POOL} -> cross-encoder -> top k",
-            )
-        if name == "hybrid":
-            from src.retrieval import hybrid
-
-            return (
-                hybrid.retrieve,
-                f"hybrid (alpha={hybrid.DEFAULT_ALPHA})",
-                "Weaviate hybrid fusion of BM25 and vector search",
-            )
-        if name == "dense":
-            from src.retrieval import dense
-
-            return dense.retrieve, "dense", "Weaviate vector search"
-    except Exception as err:  # missing credentials, no network, no model download
-        note(f"[fallback] {name} is unavailable ({type(err).__name__}: {clip(err, 90)}). "
-             f"Using BM25, which needs only the local corpus.", "yellow")
-        from src.retrieval import bm25
-
-        return bm25.retrieve, "bm25 (fallback)", "BM25 over the chunks of this filing page"
-
-    raise ValueError(f"unknown retriever {name!r}")
-
-
-def retrieve_stage(qa_row, retrieve_fn, retriever_label, description, k, offline, strategy):
-    """Retrieve, print the ranked evidence, and report whether the gold row is in it."""
-    step("STEP 1 · RETRIEVAL — which chunks of this page are relevant?")
-
-    from src.retrieval import bm25  # only for the page size; its corpus is already loaded
-
-    page_size = len(bm25.chunks_for_doc(qa_row["doc_id"]))
-    source = "live"
-    latency_ms = None
-
-    if offline:
-        ids = recorded("generation", qa_row["id"], strategy)["retrieved_ids"][:k]
-        source = "replayed"
+    if retrieve_fn:
+        start = time.perf_counter()
+        ids = retrieve_fn(qa["question"], qa["doc_id"], K)
+        source = f"live, {(time.perf_counter() - start) * 1000:.0f} ms"
     else:
-        try:
-            start = time.perf_counter()
-            ids = retrieve_fn(qa_row["question"], qa_row["doc_id"], k)
-            latency_ms = (time.perf_counter() - start) * 1000.0
-        except Exception as err:
-            note(f"[fallback] retrieval failed ({type(err).__name__}: {clip(err, 80)}); "
-                 f"replaying the recorded ranking from {_RUN_FILES['generation']}.", "yellow")
-            ids = recorded("generation", qa_row["id"], strategy)["retrieved_ids"][:k]
-            source = "replayed"
-            retriever_label, description = "replayed", "the recorded rerank ranking"
+        ids = recorded("generation", qa["id"])["retrieved_ids"][:K]
+        source = "recorded run"
 
-    context = get_chunk_contents(qa_row["doc_id"], ids)
-    gold = set(qa_row["gold_evidence_ids"])
+    context = get_chunk_contents(qa["doc_id"], ids)
+    gold = set(qa["gold_evidence_ids"])
     found = gold & set(ids)
 
-    field("page", f"{qa_row['doc_id']} — {page_size} chunks (text sentences + table rows)")
-    field("retriever", f"{retriever_label}: {description.replace('top k', f'top {k}')}")
     print()
     for rank, (local_id, text) in enumerate(context, start=1):
         marker = c(" GOLD", "green", "bold") if local_id in gold else "     "
@@ -215,108 +125,50 @@ def retrieve_stage(qa_row, retrieve_fn, retriever_label, description, k, offline
     print()
 
     if found == gold:
-        field("gold evidence", f"{len(found)} of {len(gold)} in the top {k} — retrieval succeeded", "green")
+        field("gold evidence", f"{len(found)} of {len(gold)} in the top {K}, retrieval succeeded", "green")
     else:
-        missing = ", ".join(sorted(gold - found))
-        field("gold evidence", f"{len(found)} of {len(gold)} in the top {k} — MISSING {missing}", "red")
-    if latency_ms is not None:
-        field("latency", f"{latency_ms:.1f} ms")
+        field("gold evidence", f"{len(found)} of {len(gold)} in the top {K}, MISSING "
+                               f"{', '.join(sorted(gold - found))}", "red")
+    field("source", source)
+    return context, found == gold
+
+
+def generate_stage(qa, context, live):
+    """Answer from the retrieved context only, then score it against the gold answer."""
+    step("STEP 2 · GENERATION   what is the answer, given only those chunks?")
+
+    if live:
+        gen = generate_answer(qa["question"], context, strategy=STRATEGY)
+        answer, model = gen["answer"], gen["model"]
     else:
-        field("source", f"{source} from {_RUN_FILES['generation']}", "yellow")
+        gen = recorded("generation", qa["id"])
+        answer, model = gen["answer"], "llama-3.3-70b (recorded)"
 
-    return context, ids, found == gold, source == "live"
-
-
-def generate_stage(qa_row, context, strategy, offline, retrieval_was_live=False):
-    """Answer the question from the retrieved context, and score it against the gold answer."""
-    step("STEP 2 · GENERATION — what is the answer, given only those chunks?")
-
-    source = "live"
-    if offline:
-        gen = recorded("generation", qa_row["id"], strategy)
-        answer, latency_ms, model = gen["answer"], gen["latency_ms"], "llama-3.3-70b (recorded)"
-        source = "replayed"
-    else:
-        try:
-            gen = generate_answer(qa_row["question"], context, strategy=strategy)
-            answer, latency_ms, model = gen["answer"], gen["latency_ms"], gen["model"]
-        except Exception as err:
-            note(f"[fallback] the generator is unavailable ({type(err).__name__}: "
-                 f"{clip(err, 80)}); replaying the recorded answer.", "yellow")
-            gen = recorded("generation", qa_row["id"], strategy)
-            answer, latency_ms, model = gen["answer"], gen["latency_ms"], "llama-3.3-70b (recorded)"
-            source = "replayed"
-
-    if source == "replayed" and retrieval_was_live:
-        # The recorded answer was written against the recorded (rerank) ranking. If this
-        # run retrieved live with something else, the evidence on screen is not quite the
-        # evidence that produced this answer, so say so rather than let it pass.
-        note("Careful reading it as one run: retrieval above is live, but the answer "
-             "below was generated in an earlier run against that run's ranking.", "yellow")
-
-    correct = answers_match(answer, qa_row["gold_answer"], qa_row["gold_answer_exe"])
-
-    field("prompt", f"{strategy} — grounding contract + {len(context)} evidence chunks + question")
-    field("model", f"{model} via {client._PROVIDER}" + ("" if source == "live" else " (replayed)"))
+    correct = answers_match(answer, qa["gold_answer"], qa["gold_answer_exe"])
     print()
+    field("model", model)
     field("answer", answer, "bold")
-    field("gold answer", f"{qa_row['gold_answer']}   ->   "
-          + ("CORRECT" if correct else "WRONG"), "green" if correct else "red")
-    field("latency", f"{latency_ms:.0f} ms")
+    field("gold answer", f"{qa['gold_answer']}   ->   " + ("CORRECT" if correct else "WRONG"),
+          "green" if correct else "red")
     return answer, correct
 
 
-def detect_stage(question, context, answer, question_id, strategy, offline,
-                 judge_model=None, evidence_mode=True):
-    """Run both verifiers on the answer and print what each concluded. Neither is shown
-    the gold answer, which is what makes this runnable without an answer key."""
-    step("STEP 3 · DETECTION — does that answer follow from those chunks?")
-    note("Neither verifier is given the gold answer. They see the question, the "
-         "evidence, and the candidate answer — exactly what is available at deployment "
-         "time, when there is no answer key.")
-    print()
-
-    results = {}
-
-    # 1. Rule-based: no LLM, no network. Tries to rebuild the answer out of the numbers
-    #    on the page using the operations FinQA questions actually ask for.
-    verdict = rule_based.verify(question, context, answer)
-    results["rule-based"] = verdict
-    _print_verdict("rule-based re-derivation", "no LLM — searches the page's numbers", verdict)
-
-    # 2. LLM judge, grounding mode: computes the answer itself and compares.
-    verdict, source = _judge(question, context, answer, question_id, strategy,
-                             "grounding", offline, judge_model)
-    results["judge-grounding"] = verdict
-    _print_verdict(f"LLM judge · grounding{source}",
-                   "computes the answer itself, then compares", verdict)
-
-    # 3. LLM judge, evidence mode: asks only whether the page contains what the question
-    #    needs. Never sees the candidate answer, so it cannot anchor on it.
-    if evidence_mode:
-        verdict, source = _judge(question, context, answer, question_id, strategy,
-                                 "evidence", offline, judge_model)
-        results["judge-evidence"] = verdict
-        _print_verdict(f"LLM judge · evidence{source}",
-                       "no arithmetic, and never shown the answer", verdict)
-
-    return results
+VERIFIERS = [
+    ("rule-based", "no LLM, re-derives the answer from the page's numbers"),
+    ("LLM judge · grounding", "computes the answer itself, then compares"),
+    ("LLM judge · evidence", "no arithmetic, never shown the answer"),
+]
 
 
 @contextlib.contextmanager
 def judging_as(model_id):
-    """Point the LLM client at a different model for the duration of the block.
-
-    The judge should not be the model that wrote the answers, and a one-process demo can't
-    get that from the environment, so the model is swapped in place. Safe because both
-    client backends read their module-level model at call time.
-    """
+    """Point the LLM client at a different model for the duration of the block, so the
+    judge is not the model that wrote the answer. Safe because both client backends read
+    their module-level model at call time."""
     if not model_id:
         yield
         return
-
-    from src.generation import bedrock
-
+    from src.generation import bedrock, client
     previous = (client._MODEL, bedrock.MODEL)
     client._MODEL = bedrock.MODEL = model_id
     try:
@@ -325,211 +177,166 @@ def judging_as(model_id):
         client._MODEL, bedrock.MODEL = previous
 
 
-def _judge(question, context, answer, question_id, strategy, mode, offline, judge_model=None):
-    """Run the LLM judge in `mode`, replaying a recorded verdict if it cannot run."""
-    kind = "judge_grounding" if mode == "grounding" else "judge_evidence"
-    if not offline:
-        try:
+def detect_stage(qa, context, answer, live, judge_model=None):
+    """Run all three verifiers and print what each concluded."""
+    step("STEP 3 · DETECTION   does that answer follow from those chunks?")
+    note("None of these is given the gold answer. They see the question, the evidence and "
+         "the candidate answer, which is all you have at deployment time.")
+    print()
+
+    verdicts = {"rule-based": rule_based.verify(qa["question"], context, answer)}
+    for mode, kind in (("grounding", "judge_grounding"), ("evidence", "judge_evidence")):
+        if live:
             with judging_as(judge_model):
-                return llm_judge.verify(question, context, answer, mode=mode), ""
-        except Exception as err:
-            note(f"[fallback] the judge is unavailable ({type(err).__name__}: "
-                 f"{clip(err, 80)}); replaying {_RUN_FILES[kind]}.", "yellow")
-    row = recorded(kind, question_id, strategy)
-    if row is None:
-        return {"supported": None, "category": "unavailable",
-                "reasoning": "no recorded verdict for this row"}, " (replayed)"
-    return row["verdict"], " (replayed)"
+                verdicts[f"LLM judge · {mode}"] = llm_judge.verify(
+                    qa["question"], context, answer, mode=mode)
+        else:
+            row = recorded(kind, qa["id"])
+            verdicts[f"LLM judge · {mode}"] = row["verdict"] if row else {
+                "supported": None, "category": "unavailable", "reasoning": ""}
+
+    for name, how in VERIFIERS:
+        print_verdict(name, how, verdicts[name])
+    return verdicts
 
 
-def _print_verdict(name, how, verdict):
+def print_verdict(name, how, verdict):
     supported = verdict.get("supported")
-    if supported is None:
-        label, style = "UNAVAILABLE", "yellow"
-    elif supported:
-        label, style = "SUPPORTED", "green"
-    else:
-        label, style = "HALLUCINATED", "red"
-
-    print(f"     {c(name.ljust(34), 'bold')}{c(label.ljust(14), style, 'bold')}"
+    label, style = (("SUPPORTED", "green") if supported
+                    else ("HALLUCINATED", "red") if supported is False
+                    else ("UNAVAILABLE", "yellow"))
+    print(f"     {c(name.ljust(24), 'bold')}{c(label.ljust(15), style, 'bold')}"
           f"{c(verdict.get('category', ''), 'dim')}")
     print(f"       {c(how, 'dim')}")
+
     if verdict.get("derivation"):
         print(f"       {c('re-derived as: ' + verdict['derivation'], 'green')}")
+        print()
+        return
+
+    # Worth showing next to the verdict: a judge that computed the candidate's own
+    # number and still flagged it has contradicted itself, and you can see it here.
     if verdict.get("computed_value") is not None:
-        print(f"       {c('the judge computed: ' + str(verdict['computed_value']), 'cyan')}")
-    for line in textwrap.wrap(f'"{clip(verdict.get("reasoning", ""), 320)}"', WIDTH - 8):
+        print(f"       {c('the judge worked it out as: ' + str(verdict['computed_value']), 'cyan')}")
+    for line in textwrap.wrap(clip(verdict.get("reasoning", ""), 400), WIDTH - 8):
         print(f"       {c(line, 'dim')}")
     print()
 
 
-# ── the three parts ──────────────────────────────────────────────────────────
-def part_one(qa_row, args, retriever):
-    title("PART 1 — THE RAG PIPELINE, WORKING")
-    note("A FinQA question about Visa's 2008 10-K. The answer is not written anywhere on "
-         "the page; it has to be computed from two numbers in one table row.", "blue")
+def part_one(qa, retrieve_fn, live, judge_model=None):
+    title("PART 1 · THE RAG PIPELINE, WORKING")
+    note("A question about Visa's 2008 filing. The answer is not written anywhere on the "
+         "page, so it has to be computed from the table.", "cyan")
     print()
-    field("question", qa_row["question"], "bold")
-    field("filing", f"{qa_row['doc_id']} (FinQA {qa_row['split']} split)")
+    field("question", qa["question"], "bold")
 
-    context, _ids, _hit, live = retrieve_stage(qa_row, *retriever, args.k, args.offline,
-                                               args.strategy)
-    answer, correct = generate_stage(qa_row, context, args.strategy, args.offline, live)
-    verdicts = detect_stage(qa_row["question"], context, answer, qa_row["id"],
-                            args.strategy, args.offline, args.judge_model)
+    context, _hit = retrieve_stage(qa, retrieve_fn)
+    answer, correct = generate_stage(qa, context, live)
+    verdicts = detect_stage(qa, context, answer, live, judge_model)
 
     flagged = [n for n, v in verdicts.items() if v.get("supported") is False]
     if correct and not flagged:
-        note("Every verifier agrees the answer follows from the evidence, and nothing is "
-             "flagged. That matters as much as catching hallucinations does: a detector "
-             "that fires on good answers is useless, and the trivial 'flag everything' "
-             "baseline scores F1 0.45 precisely by doing that.", "green")
+        note("Nothing was flagged. That matters as much as catching hallucinations: a "
+             "detector that fires on good answers is useless.", "green")
     elif correct:
-        note(f"The answer is correct, but {', '.join(flagged)} flagged it anyway — a false "
-             f"alarm, and the reason precision is the harder half of this problem. No "
-             f"verifier we built gets past 0.61; see part 3.", "yellow")
+        note(f"Flagged by {', '.join(flagged)}, on an answer that is correct. This is a "
+             f"false alarm, and precision is the harder half of the problem."
+             + (" It is also what self-grading looks like: the judge is the model that "
+                "wrote this answer. The recorded run, graded by a different model, does "
+                "not flag it." if live and not judge_model else ""), "yellow")
     else:
         note("The model got this one wrong on this run, so part 1 is showing a "
-             "hallucination too. The verifiers' verdicts below are still the point.",
-             "yellow")
-    return {"question": qa_row["question"], "answer": answer, "correct": correct,
-            "verdicts": verdicts, "label": "correct answer"}
+             "hallucination too. The verdicts below are still the point.", "yellow")
 
 
-def part_two(qa_row, args, retriever):
-    title("PART 2 — THE SAME PIPELINE, HALLUCINATING")
-    note(f"Same code path, different question. The row this question needs "
-         f"({', '.join(qa_row['gold_evidence_ids'])}) does not survive retrieval, so the "
-         f"model is asked to compute a percentage change from a page that does not "
-         f"contain either figure.", "blue")
+def part_two(qa, retrieve_fn, live, judge_model=None):
+    title("PART 2 · THE SAME PIPELINE, HALLUCINATING")
+    note(f"Same code path, different question. The row it needs "
+         f"({', '.join(qa['gold_evidence_ids'])}) does not survive retrieval.", "cyan")
     print()
-    field("question", qa_row["question"], "bold")
-    field("filing", f"{qa_row['doc_id']} (FinQA {qa_row['split']} split)")
+    field("question", qa["question"], "bold")
 
-    context, _ids, gold_hit, live = retrieve_stage(qa_row, *retriever, args.k, args.offline,
-                                                   args.strategy)
+    context, gold_hit = retrieve_stage(qa, retrieve_fn)
     if not gold_hit:
-        note("Retrieval missed. Note what happens next: nothing in the pipeline knows "
-             "that, and the generator is never told its evidence is incomplete.", "yellow")
+        note("Retrieval missed, and nothing in the pipeline knows it. The generator is "
+             "never told its evidence is incomplete.", "yellow")
 
-    answer, correct = generate_stage(qa_row, context, args.strategy, args.offline, live)
-
-    if correct:
-        # Guard the narrative, not the result: if this run's model happens to get it
-        # right, say so and fall back to a recorded wrong answer so the detection step
-        # still has something to detect.
-        rec = recorded("generation", qa_row["id"], args.strategy)
-        note(f"The model got this right on this run, which the recorded run did not. "
-             f"Continuing with the recorded answer ({rec['answer']!r}) so there is a "
-             f"hallucination left to catch.", "yellow")
-        answer = rec["answer"]
+    answer, correct = generate_stage(qa, context, live)
+    if correct and live:
+        answer = recorded("generation", qa["id"])["answer"]
+        note(f"The model got this right on this run. Continuing with the recorded answer "
+             f"({answer!r}) so there is still a hallucination to catch.", "yellow")
     else:
-        note("The model did not decline. It produced a confident number with no hedging "
-             "and no signal that anything was missing — which is the whole problem. A "
-             "wrong answer here looks exactly like a right one.", "red")
+        note("The model answered anyway, with no hedging and no signal that anything was "
+             "missing. A wrong answer looks exactly like a right one.", "red")
 
-    verdicts = detect_stage(qa_row["question"], context, answer, qa_row["id"],
-                            args.strategy, args.offline, args.judge_model)
+    verdicts = detect_stage(qa, context, answer, live, judge_model)
 
     flagged = [n for n, v in verdicts.items() if v.get("supported") is False]
     if len(flagged) == len(verdicts):
-        note("Every check flagged it, and each one for a different reason: the rule-based "
-             "verifier could not reach the answer from any combination of the page's "
-             "numbers; the grounding judge worked the question through the evidence and "
-             "disagreed; the evidence judge — never shown the answer at all — named the "
-             "figure that is missing. Note that none of them was told the answer was "
-             "wrong, and none of them saw the gold answer.", "green")
+        note("All three caught it, each for a different reason, and none of them saw the "
+             "gold answer.", "green")
     elif flagged:
-        note(f"Caught by: {', '.join(flagged)}. The rest missed it. Which verifiers fire "
-             f"varies by row; part 3 has the rates.", "yellow")
+        note(f"Caught by {', '.join(flagged)}; the rest missed it. Part 3 has the rates.",
+             "yellow")
     else:
-        note("Nothing flagged it — a false negative. Both verifiers miss roughly half of "
-             "all hallucinations; see part 3.", "red")
-    return {"question": qa_row["question"], "answer": answer, "correct": correct,
-            "verdicts": verdicts, "label": "hallucinated answer"}
+        note("Nothing flagged it, a false negative. Both verifiers miss roughly half of "
+             "all hallucinations.", "red")
 
 
 def part_three():
-    """Score both verifiers over the whole labeled set — no API calls, all from data/."""
-    title("PART 3 — HOW OFTEN DOES THAT WORK?")
-    note("Two questions and two verdicts prove nothing. Below is every verifier over the "
-         "same 560 labeled answers (119 distinct questions x 4 prompt strategies), "
-         "positive class = hallucinated.", "blue")
+    title("PART 3 · HOW OFTEN DOES THAT WORK?")
+    note("Two questions prove nothing. Below is every verifier over the same 560 labeled "
+         "answers, positive class = hallucinated.", "cyan")
 
-    rows = _read_jsonl(_LABELED_SET)
-
-    # The rule-based verifier is pure Python, so it is re-run here rather than replayed.
+    rows = read_jsonl(LABELED_SET)
     start = time.perf_counter()
-    live_rule_based = [
-        {**r, "verdict": rule_based.verify(r["question"],
-                                           [(a, b) for a, b in r["context"]],
-                                           str(r["answer"]))}
-        for r in rows
-    ]
+    rule_rows = [{**r, "verdict": rule_based.verify(r["question"],
+                                                    [(a, b) for a, b in r["context"]],
+                                                    str(r["answer"]))} for r in rows]
     elapsed = time.perf_counter() - start
 
-    hallucinated = lambda r: not r["gold_supported"]                       # noqa: E731
-    fabricated = lambda r: r["label_reason"] == "fabricated_without_evidence"  # noqa: E731
+    print()
+    print(c("     A · the answer does not follow from the evidence", "bold"))
+    score_table([
+        ("rule-based", rule_rows, f"re-run now, {elapsed:.2f}s, $0"),
+        ("LLM judge · llama-3.3-70b", replay("judge_selfgraded"), "graded its own answers"),
+        ("LLM judge · claude-haiku", replay("judge_grounding"), "a different model grades"),
+    ], lambda r: not r["gold_supported"], rows)
 
     print()
-    print(c("     Definition A — the answer does not follow from the evidence", "bold"))
-    print(c(f"     (arithmetic errors count; {sum(map(hallucinated, rows))} of {len(rows)} "
-            f"rows are positives)", "dim"))
-    _score_table([
-        ("rule-based re-derivation", live_rule_based, f"re-run now, {elapsed:.2f}s, $0"),
-        ("LLM judge · llama-3.3-70b", _replay("judge_selfgraded"), "graded its own answers"),
-        ("LLM judge · claude-haiku-4.5", _replay("judge_grounding"), "a different model grades"),
-    ], hallucinated, rows)
+    print(c("     B · the model answered without sufficient evidence", "bold"))
+    score_table([
+        ("LLM judge · grounding", replay("judge_grounding"), "sees the answer, computes"),
+        ("LLM judge · evidence", replay("judge_evidence"), "no answer shown, no arithmetic"),
+    ], lambda r: r["label_reason"] == "fabricated_without_evidence", rows)
 
+    note("Changing only the judging model moved F1 from 0.41 to 0.54, a bigger effect than "
+         "any prompt change we tried.")
+
+
+def replay(kind):
+    path = RUN_FILES[kind]
+    return read_jsonl(path) if os.path.exists(path) else []
+
+
+def score_table(entries, positive, all_rows):
+    """Print P/R/F1/accuracy per verifier, plus the flag-everything baseline."""
     print()
-    print(c("     Definition B — the model answered without sufficient evidence", "bold"))
-    print(c(f"     (arithmetic errors do not count; {sum(map(fabricated, rows))} of "
-            f"{len(rows)} rows are positives)", "dim"))
-    _score_table([
-        ("LLM judge · grounding mode", _replay("judge_grounding"), "sees the answer, computes"),
-        ("LLM judge · evidence mode", _replay("judge_evidence"), "no answer shown, no arithmetic"),
-    ], fabricated, rows)
-
-    note("Changing only the judging model moved F1 from 0.41 to 0.54 (paired McNemar "
-         "p = 0.001) — a bigger effect than any prompt change we tried. And the judge "
-         "anchors on the answer it is grading: its own arithmetic is 90% accurate when "
-         "the model was right and 30% when it was wrong, which is why the evidence-mode "
-         "prompt hides the answer from it. Full analysis in docs/REPORT.md.")
-
-
-def _replay(kind):
-    path = _RUN_FILES[kind]
-    return _read_jsonl(path) if os.path.exists(path) else []
-
-
-def _score_table(entries, positive, all_rows):
-    """Print P/R/F1/accuracy for each (name, judged rows, note), plus the trivial baseline."""
-    scored = [(name, _prf(judged, positive) if judged else None, comment)
-              for name, judged, comment in entries]
-    best_f1 = max((s[2] for _n, s, _c in scored if s), default=None)
-
-    print()
-    print(c(f"     {'verifier':<30}{'P':>7}{'R':>7}{'F1':>7}{'acc':>7}", "dim"))
-    print(c("     " + "-" * 58, "dim"))
-
-    for name, s, comment in scored:
-        if s is None:
-            print(f"     {name:<30}{c('(run file not found)', 'yellow')}")
+    print(c(f"     {'verifier':<28}{'P':>6}{'R':>6}{'F1':>6}{'acc':>6}", "dim"))
+    for name, judged, comment in entries:
+        if not judged:
+            print(f"     {name:<28}{c('(run file not found)', 'yellow')}")
             continue
-        p, r, f1, acc = s
-        highlight = "bold" if f1 == best_f1 else None
-        print(f"     {c(name.ljust(30), highlight)}"
-              f"{c(f'{p:>7.2f}{r:>7.2f}{f1:>7.2f}{acc:>7.2f}', highlight)}"
-              f"   {c(comment, 'dim')}")
+        p, r, f1, acc = prf(judged, positive)
+        print(f"     {name:<28}{p:>6.2f}{r:>6.2f}{f1:>6.2f}{acc:>6.2f}   {c(comment, 'dim')}")
 
-    # Flagging every answer gets perfect recall for free, so it is the score any real
-    # detector has to beat, not 0.
     p = sum(1 for r in all_rows if positive(r)) / len(all_rows)
-    print(c(f"     {'baseline: flag everything':<30}{p:>7.2f}{1.0:>7.2f}"
-            f"{2 * p / (p + 1):>7.2f}{p:>7.2f}   the bar to clear", "dim"))
+    print(c(f"     {'baseline: flag everything':<28}{p:>6.2f}{1.0:>6.2f}"
+            f"{2 * p / (p + 1):>6.2f}{p:>6.2f}   the bar to clear", "dim"))
 
 
-def _prf(judged, positive):
+def prf(judged, positive):
     tp = fp = fn = tn = 0
     for row in judged:
         gold, pred = positive(row), not row["verdict"]["supported"]
@@ -547,48 +354,61 @@ def _prf(judged, positive):
     return precision, recall, f1, (tp + tn) / len(judged)
 
 
-def summary(cases):
-    title("SUMMARY")
-    columns = [("rule-based", "rule-based"),
-               ("judge-grounding", "judge · ground"),
-               ("judge-evidence", "judge · evid")]
-    print()
-    print(c(f"     {'case':<24}{'answer':<10}" + "".join(h.ljust(15) for _k, h in columns), "dim"))
-    print(c("     " + "-" * 79, "dim"))
-    for case in cases:
-        cells = ""
-        for key, _header in columns:
-            supported = case["verdicts"].get(key, {}).get("supported")
-            text, style = (("supported", "green") if supported
-                           else ("HALLUCINATED", "red") if supported is False
-                           else ("-", "dim"))
-            cells += c(text.ljust(15), style)
-        print(f"     {case['label']:<24}{clip(case['answer'], 9):<10}{cells}")
-    print()
-    note("The left column is ground truth we happen to know because these are benchmark "
-         "questions. In production it does not exist — the verifier columns are all you "
-         "get, and part 3 is how much you can trust them.")
+def build_retriever(name):
+    """Return `(retrieve_fn, label)` for a live run, or None if it cannot be set up."""
+    try:
+        if name == "bm25":
+            from src.retrieval import bm25
+            return bm25.retrieve, "bm25"
+
+        # Load the models and open the Weaviate connection now. Left lazy, they happen
+        # inside the first timed retrieval and get reported as query latency.
+        from src.retrieval import embed, weaviate_store
+        embed.get_model()
+        weaviate_store.get_client()
+        if name == "rerank":
+            from src.retrieval import rerank
+            rerank.get_model()
+            return rerank.retrieve, f"rerank (pool={rerank.DEFAULT_POOL})"
+        if name == "hybrid":
+            from src.retrieval import hybrid
+            return hybrid.retrieve, f"hybrid (alpha={hybrid.DEFAULT_ALPHA})"
+        from src.retrieval import dense
+        return dense.retrieve, "dense"
+    except Exception as err:
+        note(f"{name} is unavailable ({type(err).__name__}: {clip(err, 70)}). "
+             f"Replaying the recorded runs instead.", "yellow")
+        return None
 
 
-# ── main ─────────────────────────────────────────────────────────────────────
+def llm_ready():
+    """Whether the configured LLM backend has credentials, without spending a call."""
+    try:
+        from src.generation import client
+        if client._PROVIDER == "bedrock":
+            import boto3
+            # boto3 builds a client even with no credentials, so resolve them directly.
+            if boto3.Session().get_credentials() is None:
+                raise RuntimeError("no AWS credentials found")
+        else:
+            client.get_client()
+        return True
+    except Exception as err:
+        note(f"No LLM credentials ({type(err).__name__}: {clip(err, 70)}). "
+             f"Replaying the recorded runs instead.", "yellow")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--live", action="store_true",
+                        help="call the retriever and the LLM instead of replaying")
     parser.add_argument("--retriever", default="rerank",
-                        choices=["rerank", "hybrid", "dense", "bm25"],
-                        help="default rerank — the configuration the report uses")
-    parser.add_argument("--k", type=int, default=5, help="chunks retrieved per question")
-    parser.add_argument("--strategy", default="zero_shot",
-                        choices=["zero_shot", "few_shot", "cot", "structured"])
+                        choices=["rerank", "hybrid", "dense", "bm25"], help="--live only")
     parser.add_argument("--judge-model", default=os.getenv("JUDGE_MODEL"),
-                        help="grade the answers with a different model from the one that "
-                             "wrote them (env: JUDGE_MODEL). This is the configuration "
-                             "the report recommends; see docs/detection_dataset.md")
-    parser.add_argument("--offline", action="store_true",
-                        help="make no network calls; replay the recorded runs in data/runs/")
-    parser.add_argument("--skip-scores", action="store_true",
-                        help="skip part 3 (the labeled-set evaluation)")
+                        help="grade with a different model than the one that wrote the "
+                             "answers (env: JUDGE_MODEL)")
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args()
 
@@ -598,52 +418,40 @@ def main():
     qa = {row["id"]: row for row in load_qa()}
     for question_id in (GOOD_QUESTION, HALLUCINATED_QUESTION):
         if question_id not in qa:
-            sys.exit(f"{question_id} is not in the corpus — run scripts/build_corpus.py first.")
+            sys.exit(f"{question_id} is not in the corpus. Build it first.")
 
     title("FINANCIAL RAG WITH HALLUCINATION DETECTION")
     print()
-    field("pipeline", "retrieve -> generate -> verify (each stage independently swappable)")
-    field("dataset", "FinQA — questions over single pages of company 10-K filings")
-    if args.offline:
-        field("mode", "offline — replaying data/runs/*.jsonl, no network calls", "yellow")
-    else:
-        field("mode", f"live — LLM_PROVIDER={client._PROVIDER}")
+    field("pipeline", "retrieve -> generate -> verify")
+    field("dataset", "FinQA, questions over single pages of company 10-K filings")
+
+    retriever = build_retriever(args.retriever) if args.live and llm_ready() else None
+    live = retriever is not None
+    retrieve_fn, label = retriever if retriever else (None, "recorded run")
+
+    if live:
+        from src.generation import client
+        field("mode", f"live, retriever = {label}")
         field("generator", client._MODEL)
-        field("judge", args.judge_model or f"{client._MODEL}  (same model — see below)")
-    field("verifiers", "rule-based re-derivation · LLM judge (grounding + evidence modes)")
-
-    if not args.offline and not args.judge_model:
-        # Worth saying up front: the single biggest result in the project is that the
-        # judge should not be the model that wrote the answers. This run grades itself.
-        note(f"This run has {client._MODEL} both writing and grading the answers, so the "
-             f"judge is marking its own homework — F1 0.41, against 0.54 when a different "
-             f"model grades. To split them, set JUDGE_MODEL in .env, or:\n"
-             f"    python demo.py --judge-model "
-             f"us.anthropic.claude-haiku-4-5-20251001-v1:0", "yellow")
-
-    retriever = (
-        (None, "replayed", f"the ranking recorded in {_RUN_FILES['generation']}")
-        if args.offline
-        else build_retriever(args.retriever)
-    )
+        field("judge", args.judge_model or f"{client._MODEL}  (the same model)")
+        if not args.judge_model:
+            note("This run has one model both writing and grading, so the judge is marking "
+                 "its own homework. That is the weakest configuration we measured: F1 0.41, "
+                 "against 0.54 when a different model grades. Set JUDGE_MODEL to split "
+                 "them.", "yellow")
+    else:
+        field("mode", "replaying recorded runs (--live to call the APIs)", "yellow")
+        field("judge", "claude-haiku-4.5, the configuration the report recommends")
 
     try:
-        cases = [
-            part_one(qa[GOOD_QUESTION], args, retriever),
-            part_two(qa[HALLUCINATED_QUESTION], args, retriever),
-        ]
-        summary(cases)
-        if not args.skip_scores:
-            part_three()
-        print()
-        print(c("  Full write-up: docs/REPORT.md   ·   detection detail: "
-                "docs/detection_dataset.md", "dim"))
+        part_one(qa[GOOD_QUESTION], retrieve_fn, live, args.judge_model)
+        part_two(qa[HALLUCINATED_QUESTION], retrieve_fn, live, args.judge_model)
+        part_three()
         print()
     finally:
-        if not args.offline and args.retriever != "bm25":
+        if live and args.retriever != "bm25":
             try:
                 from src.retrieval import weaviate_store
-
                 weaviate_store.close_client()
             except Exception:
                 pass
