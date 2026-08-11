@@ -130,7 +130,7 @@ def verify(question, context, answer, tol=DEFAULT_TOL):
 
     target = _parse(answer)
     if target is None:
-        return verdict(True, "supported", "Answer is not a number, so we cannot check it.")
+        return verdict(True, "supported", "Answer is not a number, so arithmetic cannot check it.")
 
     found = derive(target, numbers, tol, operations_for(question))
     if found:
@@ -139,5 +139,5 @@ def verify(question, context, answer, tol=DEFAULT_TOL):
     return verdict(
         False,
         "numeric_error",
-        "The evidence has numbers, but none of the calculations we try produce this answer.",
+        "The evidence has numbers, but no combination of them produces this answer.",
     )

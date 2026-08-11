@@ -114,14 +114,16 @@ python scripts/ingest_weaviate.py --recreate --split train dev test
 One command runs the whole system end to end and prints what each stage did:
 
 ```bash
-python demo.py             # live — Weaviate + cross-encoder + LLM (~6 API calls)
-python demo.py --offline   # no credentials, no network: replays data/runs/*.jsonl
+python demo.py                            # replays data/runs/*.jsonl, no network
+python demo.py --live                     # Weaviate + cross-encoder + LLM
+python demo.py AAPL/2004/page_36.pdf-2    # one question, by id
+python demo.py "gross margin"             # or by a piece of the question
+python demo.py --random                   # a random one of the 140 evaluated
 ```
 
-Set `JUDGE_MODEL` (or pass `--judge-model`) to have a different model grade the answers
-than the one that wrote them — the configuration the detection results are measured in,
-and the difference between F1 0.41 and 0.54. Without it the generator marks its own
-homework, and the demo says so before it starts.
+The default replays recorded runs, so it needs no credentials and makes no network calls
+on a fresh clone. `--live` runs retrieval and the LLM for real, and reaches any of the
+8,281 corpus questions rather than only the 140 with recordings.
 
 It walks two real FinQA questions through retrieval → generation → detection. On the
 first, retrieval finds the right table row, the model computes `637 / 5.0 = 127.4`, and
@@ -131,9 +133,10 @@ checks flag it — including the evidence-mode judge, which is never shown the a
 names the missing figure instead. It closes by scoring every verifier over the full
 560-row labeled set, computed at run time rather than quoted from the report.
 
-Each stage falls back to the recorded run it would have reproduced when a credential or
-service is missing, and says so on the line where it does it, so `python demo.py` works
-on a fresh clone with an empty `.env`.
+Set `JUDGE_MODEL` to have a different model grade the answers than the one that wrote
+them — the configuration the detection results are measured in, and the difference
+between F1 0.41 and 0.54. Without it a `--live` run has the generator marking its own
+homework.
 
 ## Running the experiments
 
@@ -155,7 +158,7 @@ python scripts/score_detection.py --input data/runs/judge_detection_eval.jsonl  
 ## Layout
 
 ```
-demo.py        the whole pipeline on two questions, in one run
+demo.py        the whole pipeline on one or two questions, in one run
 src/
   data/        chunking + loading the processed corpus
   retrieval/   bm25 · dense · hybrid · rerank (all share one retrieve() contract)
