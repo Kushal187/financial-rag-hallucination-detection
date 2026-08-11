@@ -1,7 +1,5 @@
-"""Hybrid retriever: BM25 keyword search and dense vector search, fused by Weaviate.
-
-`alpha=0` is pure BM25, `alpha=1` is pure vector; set HYBRID_ALPHA to override.
-"""
+"""Hybrid retriever: BM25 and vector search fused by Weaviate. alpha=0 is pure BM25,
+alpha=1 is pure vector."""
 
 import os
 

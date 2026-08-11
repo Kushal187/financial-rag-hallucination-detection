@@ -1,8 +1,4 @@
-"""Wrapper around the Groq chat completions API, with Bedrock as an alternate backend.
-
-`chat_json` forces JSON-object output, and `_retry` backs off on rate limits and transient
-5xx errors so a long run doesn't die on the first 429.
-"""
+"""Groq chat completions, with Bedrock as an alternate backend. Retries on rate limits."""
 
 import os
 import time

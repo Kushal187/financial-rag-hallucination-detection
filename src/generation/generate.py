@@ -1,9 +1,4 @@
-"""Generate a FinQA answer from retrieved evidence.
-
-Takes a pre-assembled context rather than calling a retriever itself, so any retrieval
-strategy can feed it unchanged. A failed JSON parse in `structured` mode falls back to
-`FINAL ANSWER:` extraction instead of crashing a run.
-"""
+"""Generate an answer from retrieved evidence, using one of the prompt strategies."""
 
 import time
 

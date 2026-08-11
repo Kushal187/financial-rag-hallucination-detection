@@ -1,10 +1,5 @@
-"""Cross-encoder reranking over a candidate pool from a first-stage retriever.
-
-A cross-encoder reads (question, chunk) jointly, which is what BM25 and the bi-encoder
-cannot do, but it is too slow to score a whole corpus. So a cheap retriever supplies
-`pool` candidates and only those are re-scored. Recall@pool of the first stage is a hard
-ceiling on recall after reranking.
-"""
+"""Cross-encoder reranking. The cross-encoder reads question and chunk together, which is
+more accurate but too slow for a whole corpus, so it only re-scores a first-stage pool."""
 
 import os
 
@@ -29,11 +24,8 @@ def get_model() -> CrossEncoder:
 
 
 def _candidates(question: str, doc_id: str, n: int, base: str) -> list[tuple[str, str]]:
-    """Fetch `n` first-stage candidates as ranked `(local_id, content)` pairs.
-
-    Both branches reuse content the first stage already holds, so no second copy of the
-    corpus is needed. Imports are inside the branch so `base="bm25"` needs no Weaviate.
-    """
+    """Fetch `n` first-stage candidates as ranked `(local_id, content)` pairs. Imported
+    inside the branch so base="bm25" needs no Weaviate."""
     if base == "hybrid":
         from src.retrieval.embed import embed_texts
         from src.retrieval.hybrid import DEFAULT_ALPHA
@@ -59,11 +51,8 @@ def rank(
     pool: int = DEFAULT_POOL,
     base: str = DEFAULT_BASE,
 ) -> list[tuple[str, float]]:
-    """Return the top-k `(local_id, score)` pairs, best first.
-
-    The pool is scored in one batched call. Ties keep first-stage order, and `pool` is
-    floored at `k` rather than raising partway through a run.
-    """
+    """Return the top-k `(local_id, score)` pairs, best first. The whole pool is scored
+    in one batched call, and ties keep first-stage order."""
     pool = max(pool, k)
     candidates = _candidates(question, doc_id, pool, base)
     if not candidates:

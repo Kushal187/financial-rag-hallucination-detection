@@ -1,8 +1,5 @@
-"""Weaviate Cloud vector store for FinQA chunks (bring-your-own vectors).
-
-One global collection, filtered by `doc_id` at query time, since FinQA gold evidence
-always lives on a single filing page.
-"""
+"""Weaviate vector store. One collection, filtered by doc_id at query time, because a
+question's gold evidence is always on one filing page."""
 
 import os
 

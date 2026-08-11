@@ -1,8 +1,7 @@
-"""Call Llama on AWS Bedrock instead of Groq: same model, no daily token limit.
+"""Bedrock backend: same Llama model as Groq, no daily token limit.
 
-Bedrock's Converse API wants a different message shape, so system messages move to their
-own argument, content becomes a list of blocks, and consecutive same-role turns are
-merged. Set LLM_PROVIDER=bedrock to use it.
+Its Converse API wants system messages separated out, content as blocks, and alternating
+roles, which is what to_converse builds.
 """
 
 import os

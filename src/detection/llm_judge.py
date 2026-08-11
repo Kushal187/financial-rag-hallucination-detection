@@ -1,8 +1,5 @@
-"""LLM-as-a-judge hallucination verifier.
-
-Decides whether an answer is supported by the retrieved evidence, not whether it matches
-the gold label. The judge never sees the gold answer, which would make the check circular.
-"""
+"""LLM-as-a-judge hallucination verifier. Decides whether an answer is supported by the
+evidence, not whether it matches the gold label, which it never sees."""
 
 import time
 

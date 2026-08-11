@@ -1,8 +1,7 @@
-"""Convert raw FinQA records into corpus chunks and answer-key rows.
+"""Turn raw FinQA records into corpus chunks and answer-key rows.
 
-The local_id scheme must stay identical to FinQA's gold_inds keys so retrieval can be
-graded against them: text_N is the Nth sentence, table_N the Nth table row linearized
-against the header. Every row is emitted, including table_0, since gold_inds can cite it.
+local_ids have to match FinQA's gold_inds keys or retrieval cannot be graded: text_N is
+the Nth sentence, table_N the Nth table row, and table_0 is emitted too.
 """
 
 

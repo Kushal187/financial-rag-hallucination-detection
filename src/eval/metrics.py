@@ -1,9 +1,4 @@
-"""Retrieval metrics for the FinQA RAG pipeline.
-
-`evaluate_retriever` takes any `retrieve(question, doc_id, k)` function, so every
-retriever is scored the same way. Retrieval happens once per question in
-`collect_rankings` and the rest is pure aggregation over those records.
-"""
+"""Retrieval metrics: recall@k, full@k, per-type recall, and a comparison table."""
 
 import time
 from collections.abc import Callable, Sequence
@@ -24,10 +19,8 @@ def collect_rankings(
     qa_rows: list[dict],
     k: int,
 ) -> list[dict]:
-    """Run `retrieve_fn` once per question at depth `k`, keeping the ranking and latency.
-
-    Any k' <= k is then a prefix slice, so nothing below needs to retrieve again.
-    """
+    """Retrieve once per question at depth `k`, so every metric below is a prefix slice
+    of these records rather than another retrieval."""
     records: list[dict] = []
     for row in qa_rows:
         start = time.perf_counter()
@@ -80,9 +73,7 @@ def _gold_type(local_id: str) -> str:
 def per_type_recall(
     records: list[dict], ks: Sequence[int] = (1, 5, 10)
 ) -> dict[str, dict[int, float]]:
-    """Recall@k split by gold evidence type, since a retriever can score well overall
-    while being much weaker on the table rows that decide the answer. Micro-averaged over
-    gold items, so a question with mixed evidence counts in both buckets."""
+    """Recall@k split into table and text evidence, micro-averaged over gold items."""
     ks = tuple(sorted(ks))
     tallies: dict[str, dict[int, list[int]]] = {}
     for rec in records:

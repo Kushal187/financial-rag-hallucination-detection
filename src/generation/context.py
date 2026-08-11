@@ -1,9 +1,4 @@
-"""Resolve retrieved chunk local_ids back to their text and format them for a prompt.
-
-Retrieval returns only local_ids, but the generator needs the content and the judge needs
-the ids to cite. The index is built once and reused, since the corpus is ~86k rows. The
-shared context type is `list[tuple[local_id, content]]`.
-"""
+"""Turn retrieved chunk ids back into text, and format that text for a prompt."""
 
 from src.data.load_data import load_chunks
 

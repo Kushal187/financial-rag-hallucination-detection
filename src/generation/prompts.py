@@ -1,9 +1,4 @@
-"""Prompt strategies for FinQA answer generation: zero_shot, few_shot, cot, structured.
-
-All four share one signature, `(question, context, few_shot_examples) -> (messages,
-needs_json)`. Few-shot examples come from the train split only, sampled stratified across
-answer shape so the model sees percent and yes/no formats rather than three numeric rows.
-"""
+"""The four prompt strategies: zero_shot, few_shot, cot, structured."""
 
 import random
 

@@ -1,8 +1,5 @@
-"""Hallucination categories.
-
-The primary signal is binary (``supported``) so the two verifiers can be scored
-head-to-head; ``category`` records why. These descriptions are fed to the LLM judge.
-"""
+"""Hallucination categories. `supported` is the primary signal; these descriptions go
+into the judge prompt so it can pick a category."""
 
 CATEGORIES = {
     "numeric_error": (

@@ -1,8 +1,7 @@
-"""Answer extraction and numeric-tolerant matching for FinQA.
+"""Answer extraction and matching.
 
-`gold_answer` (display string) and `gold_answer_exe` (executed value) disagree on units
-for about half the rows, mostly percentages stored as fractions. `answers_match` therefore
-accepts the prediction against several scale-variants of the gold rather than one field.
+gold_answer and gold_answer_exe disagree on units for about half the rows, mostly
+percentages stored as fractions, so answers_match tries several scales of the gold.
 """
 
 import json
@@ -71,11 +70,8 @@ def answers_match(
     rel_tol: float = 1e-2,
     abs_tol: float = 1e-2,
 ) -> bool:
-    """Whether the prediction is correct, tolerant of FinQA's unit ambiguity.
-
-    yes/no gold compares exactly; numeric gold matches the prediction against the gold
-    value and its x100 and /100 variants. Sign flips never match.
-    """
+    """Whether the prediction is correct. Numeric answers match the gold value or its
+    x100 and /100 variants; sign flips never match."""
     if isinstance(gold_answer_exe, str):
         gold = gold_answer_exe.strip().lower()
         if not gold: 

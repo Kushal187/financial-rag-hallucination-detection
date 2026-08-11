@@ -1,10 +1,7 @@
 """Rule-based hallucination verifier.
 
-Checks an answer by trying to re-derive it from the numbers in the evidence: if some
-calculation over those numbers reaches the answer, it counts as supported. Looking the
-number up instead would not work, because FinQA answers are almost never printed on the
-page. The operations tried are the ones the FinQA dev programs actually use, plus percent
-change. Same verify(question, context, answer) signature as the LLM judge.
+Tries to re-derive the answer from the numbers in the evidence. Looking it up instead
+would not work, since FinQA answers are almost never printed on the page.
 """
 
 import re
@@ -44,9 +41,7 @@ def extract_numbers(context, drop_years=True):
 
 
 def operations_for(question):
-    """Which calculations the question is asking for, based on its wording: "the change
-    in X" wants a subtraction, "what percentage of X" a division. Falls back to all of
-    them when the wording gives nothing to go on."""
+    """Which calculations the wording asks for. Falls back to all of them."""
     text = (question or "").lower()
     picked = {op for op, words in _OPERATION_WORDS.items() if any(w in text for w in words)}
     return picked or set(_ALL_OPERATIONS)
@@ -65,11 +60,8 @@ def _same(a, b, tol):
 
 
 def derive(target, numbers, tol=DEFAULT_TOL, operations=None):
-    """Try to build `target` out of `numbers`. Returns the derivation, or None.
-
-    One operation on at most two numbers, limited to `operations`. Multi-step programs are
-    out of reach, but widening the search lets through more wrong answers, not fewer.
-    """
+    """Try to build `target` out of `numbers` with one operation on at most two of them.
+    Returns the derivation, or None."""
     if target is None:
         return None
     ops = _ALL_OPERATIONS if operations is None else operations
