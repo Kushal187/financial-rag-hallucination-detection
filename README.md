@@ -132,8 +132,11 @@ Retrieval, on the held-out test split:
 Generation reaches 60-61% accuracy, and the four prompt strategies are within about a
 point of each other.
 
-Detection, over 560 labeled answers, counting any answer that does not follow from the
-evidence as a hallucination:
+Detection was measured two ways, because "hallucination" can mean two different things
+here. Both run over the same 560 labeled answers.
+
+**A. The answer does not follow from the evidence.** Arithmetic errors count, so 161 of
+the 560 are hallucinations (29%).
 
 | verifier | precision | recall | F1 |
 |---|---|---|---|
@@ -142,8 +145,21 @@ evidence as a hallucination:
 | LLM judge, claude-haiku grading | 0.61 | 0.49 | 0.54 |
 | flagging everything | 0.29 | 1.00 | 0.45 |
 
-Changing only the judging model moved F1 from 0.41 to 0.54, which was a larger effect than
-any prompt change. Both verifiers only just beat the baseline of flagging every answer.
+Both verifiers only just beat the baseline of flagging every answer.
+
+**B. The model answered when the evidence was not enough.** A wrong calculation made with
+the right evidence in hand does not count here, so only 41 of the 560 are hallucinations
+(7%). Both rows are claude-haiku. Only the prompt changes, and the evidence prompt is
+never shown the candidate answer.
+
+| verifier | precision | recall | F1 |
+|---|---|---|---|
+| LLM judge, grounding prompt | 0.23 | 0.73 | 0.35 |
+| LLM judge, evidence prompt | 0.32 | 0.56 | 0.41 |
+| flagging everything | 0.07 | 1.00 | 0.14 |
+
+The two tables cannot be compared against each other, because F1 depends on how common
+the positive class is.
 
 ## Team
 

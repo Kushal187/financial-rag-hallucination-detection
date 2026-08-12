@@ -147,14 +147,17 @@ def prf(rows, hallucinated):
     return precision, recall, f1
 
 
-def table(title, entries, hallucinated, rows):
-    print(f"\n{title}")
-    print(f"  {'verifier':<30}{'P':>6}{'R':>6}{'F1':>6}")
+def table(title, entries, hallucinated, rows, note=None):
+    positives = sum(1 for r in rows if hallucinated(r))
+    print(f"\n{title}   ({positives} of {len(rows)} positive)")
+    if note:
+        print(f"  {note}")
+    print(f"  {'verifier':<34}{'P':>6}{'R':>6}{'F1':>6}")
     for name, judged in entries:
         p, r, f1 = prf(judged, hallucinated)
-        print(f"  {name:<30}{p:>6.2f}{r:>6.2f}{f1:>6.2f}")
-    share = sum(1 for r in rows if hallucinated(r)) / len(rows)
-    print(f"  {'flag everything (baseline)':<30}{share:>6.2f}{1.0:>6.2f}"
+        print(f"  {name:<34}{p:>6.2f}{r:>6.2f}{f1:>6.2f}")
+    share = positives / len(rows)
+    print(f"  {'flag everything (baseline)':<34}{share:>6.2f}{1.0:>6.2f}"
           f"{2 * share / (share + 1):>6.2f}")
 
 
@@ -175,11 +178,10 @@ def scores():
     ], lambda r: not r["gold_supported"], rows)
 
     table("B. the model answered without enough evidence", [
-        ("judge, grounding mode", read_jsonl(RUNS["grounding"])),
-        ("judge, evidence mode", read_jsonl(RUNS["evidence"])),
-    ], lambda r: r["label_reason"] == "fabricated_without_evidence", rows)
-
-    print("\nChanging only the judging model moved F1 from 0.41 to 0.54.")
+        ("judge, claude, grounding prompt", read_jsonl(RUNS["grounding"])),
+        ("judge, claude, evidence prompt", read_jsonl(RUNS["evidence"])),
+    ], lambda r: r["label_reason"] == "fabricated_without_evidence", rows,
+        note="claude-haiku in both rows. row 1 is the A verdicts, rescored here.")
 
 
 def pick(qa_rows, needle):
