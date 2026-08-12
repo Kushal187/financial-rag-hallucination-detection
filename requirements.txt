@@ -7,15 +7,12 @@ python-dotenv>=1.0
 
 
 rank-bm25>=0.2.2
-# sentence-transformers supplies both the bi-encoder (embed.py) and the
-# CrossEncoder used for reranking (rerank.py); torch comes along as its dependency.
 sentence-transformers>=3.0
 faiss-cpu>=1.8
 weaviate-client>=4.9
 
 
 groq>=0.9
-# AWS Bedrock backend (same llama-3.3-70b, no daily token cap) 
 boto3>=1.34
 
 
