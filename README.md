@@ -6,6 +6,19 @@ and a detector that checks whether each answer is supported by the evidence the 
 
 CS6120 Natural Language Processing course project.
 
+## Quick start
+
+The corpus and the saved experiment runs are in the repo, so the demo needs no API keys
+and no configuration. On Python 3.10:
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python demo.py
+```
+
+Everything below is only needed to re-run the experiments yourself.
+
 ## What it does
 
 Three stages:
@@ -31,15 +44,15 @@ The two verifiers work differently:
   two prompts: one that shows it the answer, and one that hides the answer and only asks
   whether the page contains what the question needs.
 
-## Setup
+## Setup for live runs
+
+Only needed to call the models yourself or rebuild the corpus.
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Fill in `.env`:
+Anything not set falls back to a default in the code. These are the ones with no default:
 
 | variable | what it's for |
 |---|---|
