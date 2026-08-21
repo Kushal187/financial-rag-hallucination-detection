@@ -4,7 +4,7 @@ A retrieval-augmented question answering system for company 10-K filings (FinQA)
 hallucination detection built into it. We built all three stages: retrieval, generation,
 and a detector that checks whether each answer is supported by the evidence the model read.
 
-CS6120 Natural Language Processing course project.
+
 
 ## Quick start
 
